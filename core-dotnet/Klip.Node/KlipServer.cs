@@ -1,4 +1,3 @@
-using System.Net;
 using Klip.Core;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -25,9 +24,26 @@ internal sealed class KlipServer(SyncNode node) : IAsyncDisposable
             o.ListenAnyIP(port);
         });
         var app = builder.Build();
-        // Cast to Delegate: otherwise the method group binds to RequestDelegate and the IResult is never executed.
-        app.MapPost("/clipboard", (Delegate)HandleClipboardAsync);
-        app.MapGet("/ping", (Delegate)HandlePingAsync);
+
+        // Casts to Delegate: otherwise the method group binds to RequestDelegate and the IResult is never executed.
+        app.MapPost("/clipboard", (Delegate)((HttpContext ctx) => Signed(ctx, "/clipboard", node.Verifier, (id, body, ip) => node.ReceiveClipboard(id, body, ip))));
+        app.MapGet("/ping", (Delegate)((HttpContext ctx) => Signed(ctx, "/ping", node.Verifier, (id, _, ip) =>
+        {
+            node.MarkSeen(id, ip);
+            return new Reply(200, node.PingInfo);
+        })));
+        app.MapPost("/pair/request", (Delegate)(async (HttpContext ctx) =>
+            ToResult(node.HandlePairRequest(await ReadBodyAsync(ctx.Request), RemoteIp(ctx)))));
+        app.MapPost("/pair/confirm", (Delegate)((HttpContext ctx) => SignedAsync(ctx, "/pair/confirm", node.SessionVerifier, (id, _, ip) => node.HandlePairConfirmAsync(id, ip))));
+        app.MapPost("/pair/cancel", (Delegate)((HttpContext ctx) => Signed(ctx, "/pair/cancel", node.SessionVerifier, (id, _, _) => node.HandlePairCancel(id))));
+        app.MapPost("/group/introduce", (Delegate)((HttpContext ctx) => Signed(ctx, "/group/introduce", node.Verifier, (id, body, ip) =>
+        {
+            node.MarkSeen(id, ip, notify: false);
+            return node.HandleIntroduce(id, body);
+        })));
+        app.MapPost("/unpair", (Delegate)((HttpContext ctx) => Signed(ctx, "/unpair", node.Verifier, (id, _, _) => node.HandleUnpair(id))));
+        app.MapPost("/group/remove", (Delegate)((HttpContext ctx) => Signed(ctx, "/group/remove", node.Verifier, (id, body, _) => node.HandleGroupRemove(id, body))));
+
         await app.StartAsync();
         _app = app;
     }
@@ -41,27 +57,24 @@ internal sealed class KlipServer(SyncNode node) : IAsyncDisposable
         await app.DisposeAsync();
     }
 
-    private async Task<IResult> HandleClipboardAsync(HttpContext ctx)
+    private Task<IResult> Signed(HttpContext ctx, string path, RequestVerifier verifier, Func<string, byte[], string?, Reply> handler) =>
+        SignedAsync(ctx, path, verifier, (id, body, ip) => Task.FromResult(handler(id, body, ip)));
+
+    private async Task<IResult> SignedAsync(HttpContext ctx, string path, RequestVerifier verifier, Func<string, byte[], string?, Task<Reply>> handler)
     {
         var body = await ReadBodyAsync(ctx.Request);
-        var auth = node.Verifier.Verify(Headers(ctx), "POST", "/clipboard", body);
+        var auth = verifier.Verify(Headers(ctx), ctx.Request.Method, path, body);
         if (auth != VerifyResult.Ok)
         {
-            node.Log($"POST /clipboard rechazado desde {RemoteIp(ctx)}: {auth}");
+            node.Log($"{ctx.Request.Method} {path} rechazado desde {RemoteIp(ctx)}: {auth}");
             return Results.StatusCode(auth.HttpStatus());
         }
         var deviceId = ctx.Request.Headers[Protocol.HeaderDevice].ToString();
-        return Results.StatusCode(node.ReceiveClipboard(deviceId, body, RemoteIp(ctx)));
+        return ToResult(await handler(deviceId, body, RemoteIp(ctx)));
     }
 
-    private async Task<IResult> HandlePingAsync(HttpContext ctx)
-    {
-        var body = await ReadBodyAsync(ctx.Request);
-        var auth = node.Verifier.Verify(Headers(ctx), "GET", "/ping", body);
-        if (auth != VerifyResult.Ok) return Results.StatusCode(auth.HttpStatus());
-        node.MarkSeen(ctx.Request.Headers[Protocol.HeaderDevice].ToString(), RemoteIp(ctx));
-        return Results.Json(new PingInfo(node.DeviceId, node.DeviceName, node.Platform));
-    }
+    private static IResult ToResult(Reply reply) =>
+        reply.Body is null ? Results.StatusCode(reply.Status) : Results.Json(reply.Body, ProtocolJson.Options, statusCode: reply.Status);
 
     private static IEnumerable<KeyValuePair<string, string?>> Headers(HttpContext ctx) =>
         ctx.Request.Headers.Select(h => new KeyValuePair<string, string?>(h.Key, h.Value.ToString()));

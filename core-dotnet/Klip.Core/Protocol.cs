@@ -14,6 +14,11 @@ public static class Protocol
     public const int RequestNonceBytes = 16;
     public const int AesGcmIvBytes = 12;
     public const int AesGcmTagBytes = 16;
+    public const long PairingTimeoutMs = 60_000;
+    public const int PairRequestsPerMinute = 5;
+    public const int BeaconIntervalMs = 1_500;
+    public const long DiscoveryExpiryMs = 5_000;
+    public const long IntroductionExpiryMs = 7L * 24 * 3600 * 1000;
 
     public const string HeaderDevice = "X-Klip-Device";
     public const string HeaderTimestamp = "X-Klip-Timestamp";

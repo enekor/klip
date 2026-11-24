@@ -10,6 +10,16 @@ public interface IClipboardWriter
     void WriteText(string text);
 }
 
+/// <summary>mDNS/DNS-SD integration (docs/protocol.md §8.7). Optional.</summary>
+public interface IPeerResolver
+{
+    void Register(string deviceId, int port);
+    void Unregister();
+
+    /// <summary>Returns the current IP of <paramref name="deviceId"/>, or null if not found in time.</summary>
+    Task<string?> ResolveAsync(string deviceId, CancellationToken ct);
+}
+
 public sealed record SendOutcome(OutgoingDecision Decision, IReadOnlyList<PeerSendResult> Results)
 {
     public bool AnyOk => Results.Any(r => r.Ok);
@@ -18,11 +28,17 @@ public sealed record SendOutcome(OutgoingDecision Decision, IReadOnlyList<PeerSe
 /// <summary>Read-only view of a peer for the UI.</summary>
 public sealed record PeerView(string DeviceId, string Name, string Platform, string Host, int Port, bool Enabled, long? LastSeenMs, string? LastStatus);
 
+/// <summary>Server reply produced by a node handler.</summary>
+internal readonly record struct Reply(int Status, object? Body = null)
+{
+    public static Reply Error(int status, string code) => new(status, new ErrorBody(code));
+}
+
 /// <summary>
-/// One Klip node: config, pairs, anti-loop state, HTTP server and client. Platform-independent;
-/// the platform supplies clipboard access and secret protection.
+/// One Klip node: config, pairs, anti-loop state, HTTP server and client, pairing, group and radar.
+/// Platform-independent; the platform supplies clipboard access, secret protection and (optionally) mDNS.
 /// </summary>
-public sealed class SyncNode : IAsyncDisposable
+public sealed partial class SyncNode : IAsyncDisposable
 {
     private readonly ConfigStore _store;
     private readonly NodeConfig _config;
@@ -37,6 +53,9 @@ public sealed class SyncNode : IAsyncDisposable
     private readonly Lock _lock = new();
 
     public RequestVerifier Verifier { get; }
+
+    /// <summary>Optional mDNS resolver.</summary>
+    public IPeerResolver? Resolver { get; set; }
 
     /// <summary>A test message arrived (argument: sender name).</summary>
     public event Action<string>? TestReceived;
@@ -68,6 +87,7 @@ public sealed class SyncNode : IAsyncDisposable
             }
         }
         Verifier = new RequestVerifier(id => _keys.TryGetValue(id, out var k) ? k.MacKey : null, _clock);
+        SessionVerifier = new RequestVerifier(SessionMacKey, _clock);
         _server = new KlipServer(this);
     }
 
@@ -75,6 +95,7 @@ public sealed class SyncNode : IAsyncDisposable
     public string Platform => _config.Platform;
     public int HttpPort => _config.HttpPort;
     public bool IsServerRunning => _server.IsRunning;
+    internal long Now => _clock();
 
     public string DeviceName
     {
@@ -99,10 +120,11 @@ public sealed class SyncNode : IAsyncDisposable
         set { lock (_lock) { _config.FirewallPromptShown = value; Persist(); } }
     }
 
-    /// <summary>Starts the server if sync is enabled.</summary>
+    /// <summary>Starts the server if sync is enabled and retries pending introductions.</summary>
     public async Task StartAsync()
     {
-        if (SyncEnabled) await _server.StartAsync(HttpPort);
+        if (SyncEnabled) await StartServerAsync();
+        _ = DeliverAllPendingAsync();
     }
 
     /// <summary>Single on/off switch: starts or stops the server and persists the state.</summary>
@@ -113,9 +135,23 @@ public sealed class SyncNode : IAsyncDisposable
             _config.SyncEnabled = enabled;
             Persist();
         }
-        if (enabled) await _server.StartAsync(HttpPort);
-        else await _server.StopAsync();
+        if (enabled) await StartServerAsync();
+        else await StopServerAsync();
         Log(enabled ? "Sincronización activada" : "Sincronización desactivada");
+    }
+
+    private async Task StartServerAsync()
+    {
+        await _server.StartAsync(HttpPort);
+        try { Resolver?.Register(DeviceId, HttpPort); }
+        catch (Exception e) { Log($"mDNS: no se pudo registrar el servicio: {e.Message}"); }
+    }
+
+    private async Task StopServerAsync()
+    {
+        try { Resolver?.Unregister(); }
+        catch (Exception e) { Log($"mDNS: {e.Message}"); }
+        await _server.StopAsync();
     }
 
     // ---------- Peers ----------
@@ -138,31 +174,46 @@ public sealed class SyncNode : IAsyncDisposable
     public void AddOrUpdatePeer(string deviceId, string name, string host, int port, byte[] pairSecret, string platform = "unknown")
     {
         if (deviceId == DeviceId) throw new ArgumentException("No puedes vincular este mismo dispositivo");
-        var keys = PairKeys.Derive(pairSecret);
+        StorePeer(new MemberInfo { DeviceId = deviceId, DeviceName = name, Platform = platform, HttpPort = port, Host = host },
+            pairSecret, new SecretVersion(Now, "manual"));
+    }
+
+    /// <summary>Creates or replaces a pair, keeping the enabled flag of an existing one.</summary>
+    private void StorePeer(MemberInfo info, byte[] secret, SecretVersion version)
+    {
+        var keys = PairKeys.Derive(secret);
         lock (_lock)
         {
-            _config.Peers.RemoveAll(p => p.DeviceId == deviceId);
+            var existing = _config.Peers.FirstOrDefault(p => p.DeviceId == info.DeviceId);
+            _config.Peers.RemoveAll(p => p.DeviceId == info.DeviceId);
             _config.Peers.Add(new PeerConfig
             {
-                DeviceId = deviceId,
-                Name = name,
-                Host = host,
-                Port = port,
-                Platform = platform,
-                ProtectedSecret = Convert.ToBase64String(_protector.Protect(pairSecret)),
+                DeviceId = info.DeviceId,
+                Name = info.DeviceName,
+                Host = info.Host,
+                Port = info.HttpPort,
+                Platform = info.Platform,
+                Enabled = existing?.Enabled ?? true,
+                LastSeenMs = existing?.LastSeenMs,
+                ProtectedSecret = Convert.ToBase64String(_protector.Protect(secret)),
+                SecretIssuedAt = version.IssuedAt,
+                SecretIssuer = version.IssuerId,
             });
-            _keys[deviceId] = keys;
+            _keys[info.DeviceId] = keys;
             Persist();
         }
         PeersChanged?.Invoke();
     }
 
+    /// <summary>Removes a pair locally without notifying the other side.</summary>
     public void RemovePeer(string deviceId)
     {
         lock (_lock)
         {
             _config.Peers.RemoveAll(p => p.DeviceId == deviceId);
+            _config.PendingIntroductions.RemoveAll(i => i.ReceiverId == deviceId || i.Member.DeviceId == deviceId);
             _keys.TryRemove(deviceId, out _);
+            _lastStatus.TryRemove(deviceId, out _);
             Persist();
         }
         PeersChanged?.Invoke();
@@ -180,7 +231,50 @@ public sealed class SyncNode : IAsyncDisposable
         PeersChanged?.Invoke();
     }
 
-    // ---------- Outgoing ----------
+    private bool TryGetPeer(string deviceId, out PeerConfig peer, out PairKeys keys)
+    {
+        lock (_lock)
+        {
+            var p = _config.Peers.FirstOrDefault(x => x.DeviceId == deviceId);
+            if (p is not null && _keys.TryGetValue(deviceId, out var k))
+            {
+                peer = Clone(p);
+                keys = k;
+                return true;
+            }
+        }
+        peer = null!;
+        keys = null!;
+        return false;
+    }
+
+    private List<(PeerConfig Peer, PairKeys Keys)> PeersWithKeys(Func<PeerConfig, bool> filter)
+    {
+        lock (_lock)
+        {
+            return _config.Peers
+                .Where(filter)
+                .Where(p => _keys.ContainsKey(p.DeviceId))
+                .Select(p => (Clone(p), _keys[p.DeviceId]))
+                .ToList();
+        }
+    }
+
+    private void UpdateHost(string deviceId, string host, int? port = null)
+    {
+        lock (_lock)
+        {
+            var peer = _config.Peers.FirstOrDefault(p => p.DeviceId == deviceId);
+            if (peer is null || (peer.Host == host && (port is null || peer.Port == port))) return;
+            Log($"Dirección de {peer.Name} actualizada: {peer.Host}:{peer.Port} -> {host}:{port ?? peer.Port}");
+            peer.Host = host;
+            if (port is { } p) peer.Port = p;
+            Persist();
+        }
+        PeersChanged?.Invoke();
+    }
+
+    // ---------- Outgoing clipboard ----------
 
     /// <summary>Applies the outgoing rules and sends to every enabled peer (or only <paramref name="onlyDeviceId"/>).</summary>
     public async Task<SendOutcome> SendClipboardAsync(string content, bool isSensitive = false, bool isTest = false, string? onlyDeviceId = null)
@@ -188,21 +282,12 @@ public sealed class SyncNode : IAsyncDisposable
         var decision = _state.EvaluateOutgoing(content, isTest, isSensitive, SyncEnabled);
         if (decision != OutgoingDecision.Send) return new SendOutcome(decision, []);
 
-        List<(PeerConfig Peer, PairKeys Keys)> targets;
-        lock (_lock)
-        {
-            targets = _config.Peers
-                .Where(p => onlyDeviceId is null ? p.Enabled : p.DeviceId == onlyDeviceId)
-                .Where(p => _keys.ContainsKey(p.DeviceId))
-                .Select(p => (Clone(p), _keys[p.DeviceId]))
-                .ToList();
-        }
+        var targets = PeersWithKeys(p => onlyDeviceId is null ? p.Enabled : p.DeviceId == onlyDeviceId);
         if (targets.Count == 0) return new SendOutcome(decision, []);
 
         var payload = ClipboardPayload.Text(content, DeviceName, isTest);
         var messageId = Guid.NewGuid().ToString();
-        var results = await Task.WhenAll(targets.Select(t =>
-            _client.SendClipboardAsync(t.Peer, t.Keys, DeviceId, EnvelopeCodec.Seal(t.Keys.EncKey, DeviceId, payload, messageId))));
+        var results = await Task.WhenAll(targets.Select(t => SendWithResolveAsync(t.Peer, t.Keys, payload, messageId)));
 
         foreach (var r in results)
         {
@@ -218,48 +303,59 @@ public sealed class SyncNode : IAsyncDisposable
         return new SendOutcome(decision, results);
     }
 
+    /// <summary>Sends; if the peer is unreachable and mDNS finds a new IP, retries once there (§8.7).</summary>
+    private async Task<PeerSendResult> SendWithResolveAsync(PeerConfig peer, PairKeys keys, ClipboardPayload payload, string messageId)
+    {
+        var result = await _client.SendClipboardAsync(peer, keys, DeviceId, EnvelopeCodec.Seal(keys.EncKey, DeviceId, payload, messageId));
+        if (result.Ok || !result.Unreachable || Resolver is null) return result;
+
+        string? ip;
+        using (var cts = new CancellationTokenSource(1500))
+        {
+            try { ip = await Resolver.ResolveAsync(peer.DeviceId, cts.Token); }
+            catch (Exception) { ip = null; }
+        }
+        if (ip is null || ip == peer.Host) return result;
+        UpdateHost(peer.DeviceId, ip);
+        peer.Host = ip;
+        // Same messageId: if the first attempt actually arrived, the receiver ignores the duplicate.
+        return await _client.SendClipboardAsync(peer, keys, DeviceId, EnvelopeCodec.Seal(keys.EncKey, DeviceId, payload, messageId));
+    }
+
     public Task<SendOutcome> SendTestAsync(string? onlyDeviceId = null) =>
         SendClipboardAsync($"Prueba de conexión desde {DeviceName} - {DateTime.Now:HH:mm:ss}", isTest: true, onlyDeviceId: onlyDeviceId);
 
     public async Task<PingResult> PingAsync(string deviceId)
     {
-        PeerConfig peer;
-        PairKeys? keys;
-        lock (_lock)
-        {
-            var p = _config.Peers.FirstOrDefault(x => x.DeviceId == deviceId) ?? throw new ArgumentException("Dispositivo desconocido");
-            peer = Clone(p);
-            _keys.TryGetValue(deviceId, out keys);
-        }
-        if (keys is null) return new PingResult(false, 0, null, null, "Sin secreto de pareja");
-        var result = await _client.PingAsync(peer, keys, DeviceId);
+        if (!TryGetPeer(deviceId, out var peer, out var keys)) return new PingResult(false, 0, null, null, "Dispositivo desconocido");
+        var result = await _client.PingAsync(peer.Host, peer.Port, keys, DeviceId);
         _lastStatus[deviceId] = result.Ok ? $"Conectado ({result.ElapsedMs} ms)" : result.Error ?? "Error";
         if (result.Ok) MarkSeen(deviceId, null);
         else PeersChanged?.Invoke();
         return result;
     }
 
-    // ---------- Incoming (called by KlipServer after signature verification) ----------
+    // ---------- Incoming clipboard (called by KlipServer after signature verification) ----------
 
-    internal int ReceiveClipboard(string deviceId, byte[] body, string? remoteIp)
+    internal Reply ReceiveClipboard(string deviceId, byte[] body, string? remoteIp)
     {
-        if (!_keys.TryGetValue(deviceId, out var keys)) return 403;
+        if (!_keys.TryGetValue(deviceId, out var keys)) return new Reply(403);
         ClipboardPayload payload;
         Envelope envelope;
         try
         {
             envelope = EnvelopeCodec.Decode(Encoding.UTF8.GetString(body));
-            if (envelope.OriginDeviceId != deviceId) return 400;
+            if (envelope.OriginDeviceId != deviceId) return new Reply(400);
             payload = EnvelopeCodec.Open(keys.EncKey, envelope);
         }
         catch (EnvelopeException e)
         {
             Log($"Mensaje rechazado de {deviceId}: {e.Kind}");
-            return 400;
+            return new Reply(400);
         }
 
         var decision = _state.AcceptIncoming(envelope.OriginDeviceId, envelope.MessageId, payload.ContentHash);
-        if (decision != IncomingDecision.Accept) return 409;
+        if (decision != IncomingDecision.Accept) return new Reply(409);
 
         MarkSeen(deviceId, remoteIp, notify: false);
         try
@@ -276,24 +372,32 @@ public sealed class SyncNode : IAsyncDisposable
         if (payload.IsTest) TestReceived?.Invoke(payload.OriginDeviceName);
         else ContentReceived?.Invoke(payload.OriginDeviceName, payload.Content);
         PeersChanged?.Invoke();
-        return 200;
+        return new Reply(200);
     }
 
-    /// <summary>Records contact with a peer and, if given, its current IP (passive IP update, plan §5.3).</summary>
+    internal PingInfo PingInfo => new(DeviceId, DeviceName, Platform);
+
+    /// <summary>
+    /// Records verified contact with a peer and, if given, its current IP (passive IP update, plan §5.3).
+    /// Also retries pending group introductions for it.
+    /// </summary>
     internal void MarkSeen(string deviceId, string? remoteIp, bool notify = true)
     {
+        bool hasPending;
         lock (_lock)
         {
             var peer = _config.Peers.FirstOrDefault(p => p.DeviceId == deviceId);
             if (peer is null) return;
-            peer.LastSeenMs = _clock();
+            peer.LastSeenMs = Now;
             if (!string.IsNullOrEmpty(remoteIp) && peer.Host != remoteIp)
             {
                 Log($"IP de {peer.Name} actualizada: {peer.Host} -> {remoteIp}");
                 peer.Host = remoteIp;
             }
+            hasPending = _config.PendingIntroductions.Any(i => i.ReceiverId == deviceId);
             Persist();
         }
+        if (hasPending) _ = DeliverPendingAsync(deviceId);
         if (notify) PeersChanged?.Invoke();
     }
 
@@ -315,11 +419,14 @@ public sealed class SyncNode : IAsyncDisposable
         Enabled = p.Enabled,
         ProtectedSecret = p.ProtectedSecret,
         LastSeenMs = p.LastSeenMs,
+        SecretIssuedAt = p.SecretIssuedAt,
+        SecretIssuer = p.SecretIssuer,
     };
 
     public async ValueTask DisposeAsync()
     {
-        await _server.DisposeAsync();
+        StopDiscovery();
+        await StopServerAsync();
         _client.Dispose();
     }
 }

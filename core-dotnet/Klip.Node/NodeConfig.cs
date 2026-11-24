@@ -18,6 +18,26 @@ public sealed class PeerConfig
     public string? ProtectedSecret { get; set; }
 
     public long? LastSeenMs { get; set; }
+
+    /// <summary>Version of the pair secret (docs/protocol.md §8.3).</summary>
+    public long SecretIssuedAt { get; set; }
+
+    public string SecretIssuer { get; set; } = "manual";
+
+    [JsonIgnore]
+    public SecretVersion SecretVersion => new(SecretIssuedAt, SecretIssuer);
+
+    public MemberInfo ToMemberInfo() => new() { DeviceId = DeviceId, DeviceName = Name, Platform = Platform, HttpPort = Port, Host = Host };
+}
+
+/// <summary>A group introduction that could not be delivered yet (docs/protocol.md §8.3).</summary>
+public sealed class PendingIntroduction
+{
+    public required string ReceiverId { get; set; }
+    public required MemberInfo Member { get; set; }
+    public required long IssuedAt { get; set; }
+    public required string ProtectedSecret { get; set; }
+    public required long CreatedAt { get; set; }
 }
 
 public sealed class NodeConfig
@@ -30,6 +50,7 @@ public sealed class NodeConfig
     public bool StartWithWindows { get; set; } = true;
     public bool FirewallPromptShown { get; set; }
     public List<PeerConfig> Peers { get; set; } = [];
+    public List<PendingIntroduction> PendingIntroductions { get; set; } = [];
     public SyncSnapshot? Sync { get; set; }
 }
 

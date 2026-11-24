@@ -28,6 +28,11 @@ Las decisiones de diseño y su justificación están en [`plan.md`](plan.md).
 | `REQUEST_NONCE_BYTES` | `16` |
 | `AES_GCM_IV_BYTES` | `12` |
 | `AES_GCM_TAG_BYTES` | `16` |
+| `PAIRING_TIMEOUT_MS` | `60000` |
+| `PAIR_REQUESTS_PER_MINUTE` | `5` (por IP de origen) |
+| `BEACON_INTERVAL_MS` | `1500` |
+| `DISCOVERY_EXPIRY_MS` | `5000` |
+| `INTRODUCTION_EXPIRY_MS` | `604800000` (7 días) |
 
 ## 3. Normalización de Contenido
 
@@ -188,11 +193,104 @@ Estado por dispositivo: `lastSentHash`, `lastReceivedHash`, `processedMessageIds
 | 2 | `messageId` en `processedMessageIds` | `IGNORE_DUPLICATE` (`409`) |
 | — | en otro caso | `ACCEPT`: añadir `messageId`, `lastReceivedHash = hash` **antes** de escribir en el portapapeles |
 
-## 8. Resto de Endpoints
+## 8. Emparejamiento, Grupo y Descubrimiento
 
-Los cuerpos de estos endpoints viajan en claro pero firmados (salvo `/pair/request`); los secretos que transportan van cifrados con AES-GCM como en §6.2 (`aad = UTF8(<ruta> + "\n" + originDeviceId)`).
+Todos los cuerpos son JSON UTF-8. Los errores devuelven `{"error": "<código>"}`. Salvo `/pair/request`, todas las peticiones van firmadas (§5). Los campos desconocidos se ignoran.
 
-> Detalle de cuerpos de `/pair/*`, `/group/*`, `/unpair` y `/ping`, y del beacon UDP: se especificarán en la Fase 4.
+Objeto `DeviceInfo` (se repite en varios mensajes):
+
+```json
+{ "deviceId": "...", "deviceName": "...", "platform": "android|windows|devpeer", "httpPort": 8765 }
+```
+
+### 8.1. `POST /pair/request` (sin firma)
+
+Solo se acepta mientras la **ventana de emparejamiento** del receptor (R) está abierta (`MainActivity` o `ConfigWindow` visible).
+
+Petición del iniciador (I):
+
+```json
+{ "protocolVersion": 1, "deviceId": "...", "deviceName": "...", "platform": "...", "httpPort": 8765,
+  "publicKey": "base64(65 bytes)", "nonce": "base64(32 bytes)" }
+```
+
+R valida, en este orden:
+
+| Condición | Respuesta |
+| :--- | :--- |
+| Ventana cerrada | `403 {"error":"pairing_closed"}` |
+| Más de `PAIR_REQUESTS_PER_MINUTE` desde la misma IP | `429 {"error":"rate_limited"}` |
+| Versión no soportada, `deviceId` vacío o igual al propio, clave pública o nonce inválidos | `400 {"error":"invalid_request"}` |
+| Hay otra sesión pendiente no caducada con **otro** dispositivo | `409 {"error":"busy"}` |
+
+Si todo es correcto, R genera su par efímero y su nonce, deriva `pairSecret` y el PIN (§4), crea una sesión pendiente que caduca en `PAIRING_TIMEOUT_MS` (sustituye a una anterior del mismo I) y muestra al usuario *"¿Vincular con [deviceName]? PIN 482 913"*. Responde:
+
+```json
+200 { "protocolVersion": 1, "deviceId": "...", "deviceName": "...", "platform": "...", "httpPort": 8765,
+      "publicKey": "base64", "nonce": "base64", "issuedAt": 1763930000000 }
+```
+
+`issuedAt` (reloj de R) es la versión inicial del secreto de pareja en ambos lados (§8.3).
+
+### 8.2. `POST /pair/confirm` y `POST /pair/cancel` (firmadas con la sesión)
+
+Firmadas con la `macKey` derivada de la sesión pendiente (`X-Klip-Device` = I). R acepta estas dos rutas también para dispositivos que solo tienen una sesión pendiente.
+
+* I envía `/pair/confirm` (cuerpo `{}`) cuando **su** usuario confirma que el PIN coincide. R **retiene la respuesta** hasta que su propio usuario decide o la sesión caduca:
+  * `200 {"accepted": true}`: ambos guardan la pareja. R toma como `host` la IP de origen de la petición y como puerto el `httpPort` declarado; I usa el host al que se conectó.
+  * `403 {"error":"rejected"}`: el usuario de R rechazó.
+  * `408 {"error":"timeout"}`: la sesión caducó.
+  * El cliente de I usa un timeout de `PAIRING_TIMEOUT_MS + 5 s` para esta petición.
+* I envía `/pair/cancel` (cuerpo `{}`) si su usuario rechaza el PIN o cierra el diálogo. R descarta la sesión y cierra su diálogo. Responde `200`.
+* Si el usuario de R rechaza antes de recibir `/pair/confirm`, la sesión queda marcada como rechazada hasta que caduca.
+
+Tras un emparejamiento correcto, **cada** lado ejecuta las presentaciones de grupo (§8.3) hacia el nuevo dispositivo.
+
+### 8.3. `POST /group/introduce`
+
+Tras emparejarse A y B, A presenta a B cada uno de sus otros dispositivos vinculados M (y viceversa). Para cada M, el presentador X genera un secreto aleatorio `s` (32 bytes) y un `issuedAt` (su reloj), y envía **la misma** presentación a ambos extremos: a B con los datos de M, y a M con los datos de B.
+
+```json
+{ "member": { DeviceInfo, "host": "192.168.1.20" },
+  "issuedAt": 1763930000000,
+  "iv": "base64(12 bytes)",
+  "ciphertext": "base64(AES-256-GCM(encKey(X,receptor), iv, aad, s))" }
+```
+
+`aad = UTF8("/group/introduce" + "\n" + X.deviceId + "\n" + member.deviceId + "\n" + issuedAt)`
+
+Cada pareja guarda una **versión de secreto** `(issuedAt, issuerId)`; para el emparejamiento por PIN es `(issuedAt de §8.1, "pin")`. El receptor:
+
+| Condición | Respuesta |
+| :--- | :--- |
+| `member.deviceId` es el propio, o el cifrado no se puede abrir | `400 {"error":"invalid_request"}` |
+| Ya existe pareja con `member` y su versión es mayor o igual que `(issuedAt, X.deviceId)` (comparando primero `issuedAt` y luego `issuerId` como cadena ordinal) | `200 {"applied": false}` |
+| En otro caso | Crea o sustituye la pareja con `s` y esa versión -> `200 {"applied": true}` |
+
+Si un extremo no responde, X guarda la presentación como **pendiente** y la reintenta cuando vuelve a tener contacto verificado con él (petición firmada recibida o `/ping` correcto) y al arrancar. Las pendientes caducan a los `INTRODUCTION_EXPIRY_MS`.
+
+### 8.4. `POST /unpair` y `POST /group/remove`
+
+* `/unpair` (cuerpo `{}`): el receptor elimina su pareja con el emisor. `200`. El emisor la elimina localmente aunque falle el envío.
+* `/group/remove` (cuerpo `{"deviceId": "<expulsado>"}`): el emisor lo envía a todos sus dispositivos (incluido el expulsado) y luego lo elimina localmente. El receptor elimina la pareja con el expulsado; si el expulsado es él mismo, elimina **todas** sus parejas. `200`.
+
+### 8.5. `GET /ping`
+
+Firmada, cuerpo vacío. Responde `200` con `DeviceInfo` (sin `httpPort`): `{"deviceId", "deviceName", "platform"}`.
+
+### 8.6. Beacon UDP (radar)
+
+Solo mientras la ventana de configuración está visible. Cada `BEACON_INTERVAL_MS` se envía un datagrama a `255.255.255.255:8766` y a la dirección de broadcast de cada interfaz IPv4 activa:
+
+```json
+{ "klip": 1, "deviceId": "...", "deviceName": "...", "platform": "...", "httpPort": 8765, "pairingOpen": true }
+```
+
+El receptor ignora los suyos. Si el `deviceId` es de un dispositivo vinculado y la IP de origen es distinta de la guardada, comprueba la nueva IP con un `/ping` firmado antes de actualizarla (un beacon no está autenticado). Si es desconocido, lo muestra en *"Dispositivos detectados"* y lo retira tras `DISCOVERY_EXPIRY_MS` sin beacons.
+
+### 8.7. mDNS / DNS-SD
+
+Mientras su servidor HTTP está activo, cada nodo anuncia `_klip._tcp.local.` con nombre de instancia = `deviceId`, puerto = `httpPort` y TXT `id=<deviceId>`. Si un envío falla por error de conexión, el emisor resuelve la instancia del destino (timeout 1,5 s) y, si la IP ha cambiado, reintenta **una vez** y actualiza la IP guardada.
 
 ## 9. Versionado
 
