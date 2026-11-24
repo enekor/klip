@@ -259,13 +259,15 @@ Tras emparejarse A y B, A presenta a B cada uno de sus otros dispositivos vincul
 
 `aad = UTF8("/group/introduce" + "\n" + X.deviceId + "\n" + member.deviceId + "\n" + issuedAt)`
 
-Cada pareja guarda una **versión de secreto** `(issuedAt, issuerId)`; para el emparejamiento por PIN es `(issuedAt de §8.1, "pin")`. El receptor:
+El receptor:
 
 | Condición | Respuesta |
 | :--- | :--- |
 | `member.deviceId` es el propio, o el cifrado no se puede abrir | `400 {"error":"invalid_request"}` |
-| Ya existe pareja con `member` y su versión es mayor o igual que `(issuedAt, X.deviceId)` (comparando primero `issuedAt` y luego `issuerId` como cadena ordinal) | `200 {"applied": false}` |
-| En otro caso | Crea o sustituye la pareja con `s` y esa versión -> `200 {"applied": true}` |
+| Ya existe una pareja con `member` | `200 {"applied": false}` (se conserva la existente) |
+| En otro caso | Crea la pareja con `s` -> `200 {"applied": true}` |
+
+**Una presentación nunca sustituye una pareja existente.** Si lo hiciera, dos vinculaciones solapadas podrían cambiar a la vez los canales por los que viajan otras presentaciones y dejar parejas descuadradas sin forma de repararse solas. Para renovar el secreto de una pareja se vuelve a vincular por PIN (§8.1–8.2), que siempre sustituye porque es un intercambio directo entre los dos extremos. Cada pareja guarda además, como información, la versión de su secreto `(issuedAt, issuerId)`: `(issuedAt de §8.1, "pin")` o `(issuedAt, presentador)`.
 
 Si un extremo no responde, X guarda la presentación como **pendiente** y la reintenta cuando vuelve a tener contacto verificado con él (petición firmada recibida o `/ping` correcto) y al arrancar. Las pendientes caducan a los `INTRODUCTION_EXPIRY_MS`.
 

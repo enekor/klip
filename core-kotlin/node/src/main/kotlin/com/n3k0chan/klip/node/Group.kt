@@ -96,9 +96,7 @@ internal class GroupManager(private val node: SyncNode) {
         }
 
         val version = SecretVersion(req.issuedAt, introducerId)
-        val existing = node.config.peers.firstOrNull { it.deviceId == req.member.deviceId }
-        if (existing != null && existing.secretVersion >= version) return Reply(200, IntroduceResponse(false))
-        node.storePeer(req.member, secret, version)
+        if (!node.storePeer(req.member, secret, version, onlyIfAbsent = true)) return Reply(200, IntroduceResponse(false))
         node.log("Nuevo miembro del grupo: ${req.member.deviceName} (presentado por $introducerId)")
         return Reply(200, IntroduceResponse(true))
     }

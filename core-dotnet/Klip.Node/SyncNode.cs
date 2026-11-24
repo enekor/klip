@@ -195,13 +195,18 @@ public sealed partial class SyncNode : IAsyncDisposable
             pairSecret, new SecretVersion(Now, "manual"));
     }
 
-    /// <summary>Creates or replaces a pair, keeping the enabled flag of an existing one.</summary>
-    private void StorePeer(MemberInfo info, byte[] secret, SecretVersion version)
+    /// <summary>
+    /// Creates or replaces a pair, keeping the enabled flag of an existing one. With <paramref name="onlyIfAbsent"/>
+    /// (group introductions, docs/protocol.md §8.3) an existing pair is never replaced; the check and the store
+    /// happen under the same lock so two introductions arriving at once cannot both apply.
+    /// </summary>
+    private bool StorePeer(MemberInfo info, byte[] secret, SecretVersion version, bool onlyIfAbsent = false)
     {
         var keys = PairKeys.Derive(secret);
         lock (_lock)
         {
             var existing = _config.Peers.FirstOrDefault(p => p.DeviceId == info.DeviceId);
+            if (onlyIfAbsent && existing is not null) return false;
             _config.Peers.RemoveAll(p => p.DeviceId == info.DeviceId);
             _config.Peers.Add(new PeerConfig
             {
@@ -220,6 +225,7 @@ public sealed partial class SyncNode : IAsyncDisposable
             Persist();
         }
         PeersChanged?.Invoke();
+        return true;
     }
 
     /// <summary>Removes a pair locally without notifying the other side.</summary>

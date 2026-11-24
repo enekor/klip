@@ -232,25 +232,63 @@ public sealed class PairingTests : IAsyncLifetime
         Assert.False(Knows(b, a));
     }
 
-    [Fact]
-    public async Task SecretVersionResolvesConcurrentIntroductions()
+    private static async Task AssertEveryoneReachesEveryone(params SyncNode[] nodes)
     {
-        // Same pair introduced twice with different versions must end with the same secret on both sides.
+        foreach (var x in nodes)
+        {
+            var outcome = await x.SendTestAsync();
+            Assert.Equal(nodes.Length - 1, outcome.Results.Count);
+            Assert.True(outcome.Results.All(r => r.Ok), $"{x.DeviceName}: " + string.Join(", ", outcome.Results.Select(r => $"{r.Name}={r.Error ?? "ok"}")));
+        }
+    }
+
+    [Fact]
+    public async Task FourDevicesJoinOneByOneIntoAFullMesh()
+    {
         var a = await NewNode("A");
         var b = await NewNode("B");
         var c = await NewNode("C");
         var d = await NewNode("D");
         Assert.True((await Pair(a, b)).Ok);
+        Assert.True((await Pair(c, a)).Ok);
+        await WaitUntil(() => new[] { a, b, c }.All(n => n.Peers.Count == 2), "mesh of 3");
+        Assert.True((await Pair(d, b)).Ok); // D joins through B: B introduces D to A and C
+        await WaitUntil(() => new[] { a, b, c, d }.All(n => n.Peers.Count == 3), "mesh of 4");
+        await AssertEveryoneReachesEveryone(a, b, c, d);
+    }
+
+    [Fact]
+    public async Task RepairingAnExistingMemberKeepsTheGroupConsistent()
+    {
+        var a = await NewNode("A");
+        var b = await NewNode("B");
+        var c = await NewNode("C");
+        Assert.True((await Pair(a, b)).Ok);
+        Assert.True((await Pair(c, a)).Ok);
+        await WaitUntil(() => new[] { a, b, c }.All(n => n.Peers.Count == 2), "mesh of 3");
+
+        // Pair again two devices that already know each other (and everyone else): the PIN pair is renewed and
+        // the resulting introductions must not replace any existing pair.
+        Assert.True((await Pair(c, b)).Ok);
+        await Task.Delay(500);
+        await AssertEveryoneReachesEveryone(a, b, c);
+    }
+
+    [Fact]
+    public async Task IntroductionNeverReplacesAnExistingPair()
+    {
+        var a = await NewNode("A");
+        var b = await NewNode("B");
+        var c = await NewNode("C");
+        Assert.True((await Pair(a, b)).Ok);
+        Assert.True((await Pair(b, c)).Ok);
+        await WaitUntil(() => Knows(a, c) && Knows(c, a), "A and C introduced by B");
+        await AssertEveryoneReachesEveryone(a, b, c);
+
+        // A pairs with C directly (PIN): A introduces B to C and C introduces B to A, but those pairs already exist.
         Assert.True((await Pair(a, c)).Ok);
-        Assert.True((await Pair(d, b)).Ok);
-        Assert.True((await Pair(d, c)).Ok);
-        await WaitUntil(() => new[] { a, b, c, d }.All(n => n.Peers.Count == 3), "full mesh of 4");
-        await Task.Delay(1000); // let late introductions (secret replacements) settle
-        foreach (var x in new[] { a, b, c, d })
-        {
-            var outcome = await x.SendTestAsync();
-            Assert.True(outcome.Results.All(r => r.Ok), $"{x.DeviceName}: " + string.Join(", ", outcome.Results.Select(r => $"{r.Name}={r.Error}")));
-        }
+        await Task.Delay(500);
+        await AssertEveryoneReachesEveryone(a, b, c);
     }
 
     [Fact]

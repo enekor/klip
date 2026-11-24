@@ -119,12 +119,7 @@ public sealed partial class SyncNode
         }
 
         var version = new SecretVersion(req.IssuedAt, introducerId);
-        lock (_lock)
-        {
-            var existing = _config.Peers.FirstOrDefault(p => p.DeviceId == req.Member.DeviceId);
-            if (existing is not null && existing.SecretVersion.CompareTo(version) >= 0) return new Reply(200, new IntroduceResponse(false));
-        }
-        StorePeer(req.Member, secret, version);
+        if (!StorePeer(req.Member, secret, version, onlyIfAbsent: true)) return new Reply(200, new IntroduceResponse(false));
         Log($"Nuevo miembro del grupo: {req.Member.DeviceName} (presentado por {introducerId})");
         return new Reply(200, new IntroduceResponse(true));
     }

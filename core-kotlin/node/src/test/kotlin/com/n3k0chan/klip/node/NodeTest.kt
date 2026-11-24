@@ -186,6 +186,24 @@ class NodeTest {
     }
 
     @Test
+    fun repairingAnExistingMemberKeepsTheGroupConsistent() = runBlocking {
+        val a = newNode("A")
+        val b = newNode("B")
+        val c = newNode("C")
+        assertTrue(pair(a, b).ok)
+        assertTrue(pair(c, a).ok)
+        waitUntil("mesh of 3") { listOf(a, b, c).all { it.peers.value.size == 2 } }
+        // Pair again two devices that already know each other: introductions must not replace existing pairs.
+        assertTrue(pair(c, b).ok)
+        delay(500)
+        for (x in listOf(a, b, c)) {
+            val outcome = x.sendTest()
+            assertEquals(2, outcome.results.size)
+            assertTrue(outcome.results.all { it.ok }, "${x.deviceName}: ${outcome.results}")
+        }
+    }
+
+    @Test
     fun expelAndUnpair() = runBlocking {
         val a = newNode("A")
         val b = newNode("B")

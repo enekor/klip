@@ -218,11 +218,17 @@ class SyncNode(
         storePeer(MemberInfo(deviceId, name, platform, port, host), pairSecret, SecretVersion(now, "manual"))
     }
 
-    /** Creates or replaces a pair, keeping the enabled flag of an existing one. */
-    internal fun storePeer(info: MemberInfo, secret: ByteArray, version: SecretVersion) {
+    /**
+     * Creates or replaces a pair, keeping the enabled flag of an existing one. With [onlyIfAbsent] (group
+     * introductions, docs/protocol.md §8.3) an existing pair is never replaced; the check and the store are atomic.
+     */
+    internal fun storePeer(info: MemberInfo, secret: ByteArray, version: SecretVersion, onlyIfAbsent: Boolean = false): Boolean {
         val derived = PairKeys.derive(secret)
+        var stored = false
         update { cfg ->
             val existing = cfg.peers.firstOrNull { it.deviceId == info.deviceId }
+            if (onlyIfAbsent && existing != null) return@update cfg
+            stored = true
             val peer = PeerConfig(
                 deviceId = info.deviceId,
                 name = info.deviceName,
@@ -238,6 +244,7 @@ class SyncNode(
             keys[info.deviceId] = derived
             cfg.copy(peers = cfg.peers.filter { it.deviceId != info.deviceId } + peer)
         }
+        return stored
     }
 
     /** Removes a pair locally without notifying the other side. */
