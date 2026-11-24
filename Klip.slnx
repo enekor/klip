@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/core-dotnet/">
+    <Project Path="core-dotnet/Klip.Core.Tests/Klip.Core.Tests.csproj" />
+    <Project Path="core-dotnet/Klip.Core/Klip.Core.csproj" />
+    <Project Path="core-dotnet/Klip.Node.Tests/Klip.Node.Tests.csproj" />
+    <Project Path="core-dotnet/Klip.Node/Klip.Node.csproj" />
+  </Folder>
+</Solution>
