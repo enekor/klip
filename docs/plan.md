@@ -22,7 +22,7 @@
 | Tamaño máximo de texto | **Sin límite a nivel de aplicación** (ver limitación de plataforma en Android, §3.6). |
 
 ### Fuera de alcance
-Imágenes, archivos, historial del portapapeles, sincronización fuera de la LAN (Internet / nube), y otras plataformas (macOS, Linux, iOS).
+Archivos, historial del portapapeles, sincronización fuera de la LAN (Internet / nube), y otras plataformas (macOS, iOS).
 
 ---
 

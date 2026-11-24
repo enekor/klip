@@ -157,7 +157,7 @@ internal sealed class ConfigWindow : Form
         _status.ForeColor = on ? Color.DarkGreen : Color.DimGray;
         _lastReceived.Text = _node.LastReceived is { } r
             ? $"{DateTimeOffset.FromUnixTimeMilliseconds(r.AtMs).LocalDateTime:HH:mm:ss} · de {r.From}{(r.IsTest ? " · prueba" : "")}" +
-              $"{Environment.NewLine}«{r.Preview(200)}»"
+              $"{Environment.NewLine}{(r.IsImage ? r.Preview() : $"«{r.Preview(200)}»")}"
             : "nada todavía";
         ShowLastImage(_node.LastReceived);
 

@@ -43,7 +43,8 @@ normalize(s):
     s = NFC(s)
     return s
 
-contentHash(s) = hex(SHA256(UTF8(normalize(s))))
+contentHash(s) = hex(SHA256(UTF8(normalize(s))))      # texto
+imageHash(b)   = hex(SHA256(b))                         # imagen: bytes exactos, sin recodificar
 
 isBlank(s) = s está vacía o todos sus caracteres son espacio en blanco Unicode
 ```
@@ -151,6 +152,24 @@ El nonce solo se registra tras validar la firma, para que un atacante no pueda l
 }
 ```
 
+Imagen (`type = "image"`):
+
+```json
+{
+  "type": "image",
+  "content": "",
+  "contentHash": "hex sha256 de los bytes de la imagen",
+  "originDeviceName": "PC",
+  "isTest": false,
+  "mimeType": "image/png",
+  "data": "base64(bytes de la imagen)"
+}
+```
+
+* `mimeType` es `image/png` o `image/jpeg`. Otros formatos se convierten a PNG antes de enviar.
+* Los bytes viajan sin recodificar: el receptor los coloca tal cual en el portapapeles (en Windows, además, como mapa de bits).
+* Las mismas reglas antibucle de §7 se aplican con `imageHash`.
+
 ```
 plaintext  = UTF8(JSON(carga))
 aad        = UTF8(messageId + "\n" + originDeviceId)
@@ -166,8 +185,8 @@ ciphertext = AES-256-GCM(encKey, iv, aad, plaintext)   # ct || tag de 16 bytes
 
 1. `protocolVersion != 1` -> rechazar (`400`).
 2. Descifrar con `encKey` y la `aad` reconstruida; si falla la autenticación GCM -> rechazar (`400`).
-3. Parsear la carga; `type` distinto de `"text"` -> rechazar (`400`).
-4. Recalcular `contentHash(content)`; si no coincide con el recibido -> rechazar (`400`).
+3. Parsear la carga; `type` distinto de `"text"` o `"image"` -> rechazar (`400`).
+4. Texto: recalcular `contentHash(content)`. Imagen: `mimeType` admitido, `data` no vacío y `imageHash(data)`. Si no coincide -> rechazar (`400`).
 5. Además, `originDeviceId` del sobre debe coincidir con `X-Klip-Device` -> si no, `400`.
 
 ## 7. Reglas Antibucle

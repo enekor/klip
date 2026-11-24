@@ -1,6 +1,6 @@
 # Klip
 
-Sincronizador de portapapeles **100 % local** entre **Windows, Android y Linux**. Copias en un dispositivo y pegas en otro, sin nube, sin cuentas y sin root.
+Sincronizador de portapapeles **100 % local** entre **Windows, Android y Linux**: copias texto, enlaces o **imágenes** en un dispositivo y los pegas en otro, sin nube, sin cuentas y sin root.
 
 - **Cifrado de extremo a extremo:** cada mensaje va firmado (HMAC-SHA256) y cifrado (AES-256-GCM) con una clave distinta por cada pareja de dispositivos.
 - **Emparejamiento por PIN:** los dispositivos se descubren solos en la red; confirmas un código de 6 dígitos en ambas pantallas.
@@ -37,7 +37,9 @@ Si el radar no encuentra al otro dispositivo (redes de invitados, aislamiento de
 | Windows | Automático al copiar | Automática |
 | Linux X11, KDE Plasma (Wayland), Sway/Hyprland | Automático al copiar | Automática |
 | Linux GNOME (Wayland) | Manual: menú **Enviar portapapeles ahora** o un atajo de teclado con `klip --send-clipboard` | Automática |
-| Android | Tile de Ajustes rápidos, menú **Compartir** o menú de **selección de texto** | Automática |
+| Android | Tile de Ajustes rápidos, menú **Compartir** (texto o imagen) o menú de **selección de texto** | Automática |
+
+Las imágenes (PNG y JPEG; otros formatos se convierten a PNG) siguen el mismo camino que el texto: una captura de pantalla en Windows (`Win + Mayús + S`) aparece en el portapapeles del móvil, y una foto compartida desde la galería del móvil se pega en el PC.
 
 Android y GNOME (Wayland) no permiten a una app leer el portapapeles en segundo plano; por eso el envío necesita un gesto.
 

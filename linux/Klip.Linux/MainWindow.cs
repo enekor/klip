@@ -134,7 +134,7 @@ internal sealed class MainWindow : Window
             _autostart.IsChecked = _node.StartWithWindows;
             _sendMode.Text = SendModeText();
             _lastReceived.Text = _node.LastReceived is { } r
-                ? $"{DateTimeOffset.FromUnixTimeMilliseconds(r.AtMs).LocalDateTime:HH:mm:ss} · de {r.From}{(r.IsTest ? " · prueba" : "")}\n«{r.Preview(300)}»"
+                ? $"{DateTimeOffset.FromUnixTimeMilliseconds(r.AtMs).LocalDateTime:HH:mm:ss} · de {r.From}{(r.IsTest ? " · prueba" : "")}\n{(r.IsImage ? r.Preview() : $"«{r.Preview(300)}»")}"
                 : "Nada todavía. Pulsa «Enviar prueba» en otro dispositivo.";
             ShowLastImage(_node.LastReceived);
 
