@@ -1,0 +1,167 @@
+using System.Text;
+using Klip.Core;
+using Klip.Node;
+
+// KlipDevPeer: a fake Klip device for testing without the Android app.
+// Stores its config (with the pair secret in plain text) in ./devpeer.json unless --config is given.
+
+Console.OutputEncoding = Encoding.UTF8;
+var argv = args.ToList();
+var configPath = TakeOption(argv, "--config") ?? "devpeer.json";
+
+if (argv.Count == 0 || argv[0] is "-h" or "--help" or "help")
+{
+    PrintHelp();
+    return 0;
+}
+
+var command = argv[0];
+argv.RemoveAt(0);
+
+try
+{
+    switch (command)
+    {
+        case "new-secret":
+            Console.WriteLine(Convert.ToHexStringLower(PairKeys.NewRandomSecret()));
+            return 0;
+
+        case "init":
+        {
+            var store = new ConfigStore(configPath);
+            var cfg = store.LoadOrCreate();
+            cfg.DeviceName = TakeOption(argv, "--name") ?? cfg.DeviceName;
+            cfg.HttpPort = int.Parse(TakeOption(argv, "--port") ?? cfg.HttpPort.ToString());
+            cfg.Platform = "devpeer";
+            store.Save(cfg);
+            Console.WriteLine($"Config:    {Path.GetFullPath(configPath)}");
+            Console.WriteLine($"Nombre:    {cfg.DeviceName}");
+            Console.WriteLine($"Device ID: {cfg.DeviceId}");
+            Console.WriteLine($"Puerto:    {cfg.HttpPort}");
+            return 0;
+        }
+
+        case "add-peer":
+        {
+            await using var node = OpenNode();
+            var id = Require(argv, "--id");
+            var secret = Convert.FromHexString(Require(argv, "--secret"));
+            node.AddOrUpdatePeer(id, TakeOption(argv, "--name") ?? id, Require(argv, "--host"),
+                int.Parse(TakeOption(argv, "--port") ?? Protocol.HttpPort.ToString()), secret, "windows");
+            Console.WriteLine("Dispositivo añadido.");
+            return 0;
+        }
+
+        case "peers":
+        {
+            await using var node = OpenNode();
+            foreach (var p in node.Peers) Console.WriteLine($"{p.Name,-20} {p.Host}:{p.Port,-6} {(p.Enabled ? "activo" : "inactivo"),-9} {p.DeviceId}");
+            return 0;
+        }
+
+        case "send":
+        {
+            await using var node = OpenNode();
+            var isTest = argv.Remove("--test");
+            var text = argv.Count > 0 ? string.Join(' ', argv) : await Console.In.ReadToEndAsync();
+            var outcome = isTest ? await node.SendTestAsync() : await node.SendClipboardAsync(text);
+            Console.WriteLine($"Decisión: {outcome.Decision}");
+            foreach (var r in outcome.Results) Console.WriteLine($"  {r.Name}: {(r.Ok ? $"OK ({r.HttpStatus})" : r.Error)}");
+            return outcome.Decision == OutgoingDecision.Send && !outcome.AnyOk ? 1 : 0;
+        }
+
+        case "ping":
+        {
+            await using var node = OpenNode();
+            var failed = false;
+            foreach (var p in node.Peers)
+            {
+                var r = await node.PingAsync(p.DeviceId);
+                failed |= !r.Ok;
+                Console.WriteLine(r.Ok ? $"{p.Name}: OK {r.ElapsedMs} ms ({r.Info?.DeviceName}, {r.Info?.Platform})" : $"{p.Name}: {r.Error}");
+            }
+            return failed ? 1 : 0;
+        }
+
+        case "listen":
+        {
+            var clipboard = new ConsoleClipboard();
+            await using var node = OpenNode(clipboard);
+            node.LogMessage += m => Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {m}");
+            node.TestReceived += from => Console.WriteLine($"*** Prueba recibida correctamente desde {from} ***");
+            await node.StartAsync();
+            Console.WriteLine($"Escuchando en el puerto {node.HttpPort} como «{node.DeviceName}» ({node.DeviceId}).");
+            Console.WriteLine("Escribe una línea y pulsa Enter para enviarla. Ctrl+C para salir.");
+            using var cts = new CancellationTokenSource();
+            Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+            var input = Task.Run(async () =>
+            {
+                while (!cts.IsCancellationRequested && await Console.In.ReadLineAsync() is { } line)
+                {
+                    if (line.Length == 0) continue;
+                    var outcome = await node.SendClipboardAsync(line);
+                    Console.WriteLine($"  -> {outcome.Decision}: " + string.Join(", ", outcome.Results.Select(r => $"{r.Name} {(r.Ok ? "OK" : r.Error)}")));
+                }
+            });
+            try { await Task.Delay(Timeout.Infinite, cts.Token); } catch (OperationCanceledException) { }
+            return 0;
+        }
+
+        default:
+            Console.Error.WriteLine($"Comando desconocido: {command}");
+            PrintHelp();
+            return 2;
+    }
+}
+catch (Exception e) when (e is ArgumentException or FormatException or IOException)
+{
+    Console.Error.WriteLine($"Error: {e.Message}");
+    return 2;
+}
+
+SyncNode OpenNode(IClipboardWriter? clipboard = null)
+{
+    if (!File.Exists(configPath)) throw new IOException($"No existe {configPath}. Ejecuta primero: KlipDevPeer init");
+    return new SyncNode(new ConfigStore(configPath), new PlainSecretProtector(), clipboard ?? new ConsoleClipboard());
+}
+
+static string? TakeOption(List<string> list, string name)
+{
+    var i = list.IndexOf(name);
+    if (i < 0 || i + 1 >= list.Count) return null;
+    var value = list[i + 1];
+    list.RemoveRange(i, 2);
+    return value;
+}
+
+static string Require(List<string> list, string name) =>
+    TakeOption(list, name) ?? throw new ArgumentException($"Falta {name}");
+
+static void PrintHelp() => Console.WriteLine("""
+    KlipDevPeer — dispositivo Klip falso para pruebas (Fase 2)
+
+    Uso: KlipDevPeer [--config devpeer.json] <comando>
+
+      init [--name N] [--port P]          Crea/actualiza la identidad (puerto por defecto 8765)
+      new-secret                          Genera un secreto de pareja (64 hex)
+      add-peer --id ID --host H [--port P] [--name N] --secret HEX
+                                          Vincula manualmente con otro dispositivo
+      peers                               Lista los dispositivos vinculados
+      ping                                Comprueba la conexión con cada dispositivo
+      send [--test] [texto]               Envía un texto (o stdin) / una prueba
+      listen                              Recibe copias y las muestra; cada línea escrita se envía
+
+    Ejemplo en el mismo PC que Klip.exe:
+      KlipDevPeer init --name DevPeer --port 8770
+      KlipDevPeer add-peer --id <ID de Klip> --host 127.0.0.1 --port 8765 --name PC --secret <secreto>
+      KlipDevPeer listen
+    """);
+
+internal sealed class ConsoleClipboard : IClipboardWriter
+{
+    public void WriteText(string text)
+    {
+        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Portapapeles <- ({text.Length} caracteres)");
+        Console.WriteLine(text.Length > 2000 ? text[..2000] + "…" : text);
+    }
+}
