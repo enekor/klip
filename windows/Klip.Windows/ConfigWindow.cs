@@ -14,6 +14,7 @@ internal sealed class ConfigWindow : Form
     private readonly Label _address = new() { AutoSize = true };
     private readonly Label _status = new() { AutoSize = true };
     private readonly Label _lastReceived = new() { AutoSize = true, MaximumSize = new Size(620, 0) };
+    private readonly PictureBox _lastImage = new() { Size = new Size(200, 120), SizeMode = PictureBoxSizeMode.Zoom, Visible = false, BorderStyle = BorderStyle.FixedSingle };
     private readonly Label _activity = new() { AutoSize = true, ForeColor = Color.DimGray, Padding = new Padding(8, 4, 8, 4) };
     private readonly ListView _discovered = NewList(checkBoxes: false);
     private readonly ListView _peers = NewList(checkBoxes: true);
@@ -25,6 +26,7 @@ internal sealed class ConfigWindow : Form
         _app = app;
         _node = app.Node;
         Text = "Klip — Configuración";
+        Icon = AppIcon.Main;
         Width = 900;
         Height = 640;
         MinimumSize = new Size(760, 520);
@@ -45,6 +47,7 @@ internal sealed class ConfigWindow : Form
         identity.Controls.Add(new Label { Text = "Última recepción:", AutoSize = true, Anchor = AnchorStyles.Left | AnchorStyles.Top }, 0, 3);
         identity.Controls.Add(_lastReceived, 1, 3);
         identity.SetColumnSpan(_lastReceived, 2);
+        identity.Controls.Add(_lastImage, 1, 4);
 
         // ---- Radar ----
         _discovered.Columns.Add("Nombre", 200);
@@ -156,6 +159,7 @@ internal sealed class ConfigWindow : Form
             ? $"{DateTimeOffset.FromUnixTimeMilliseconds(r.AtMs).LocalDateTime:HH:mm:ss} · de {r.From}{(r.IsTest ? " · prueba" : "")}" +
               $"{Environment.NewLine}«{r.Preview(200)}»"
             : "nada todavía";
+        ShowLastImage(_node.LastReceived);
 
         var selectedDiscovered = SelectedTag(_discovered);
         _discovered.BeginUpdate();
@@ -185,6 +189,31 @@ internal sealed class ConfigWindow : Form
         }
         _peers.EndUpdate();
         _refreshing = false;
+    }
+
+    private byte[]? _shownImage;
+
+    private void ShowLastImage(ReceivedItem? item)
+    {
+        if (item?.Image is not { } bytes)
+        {
+            _lastImage.Visible = false;
+            return;
+        }
+        if (ReferenceEquals(bytes, _shownImage)) return;
+        try
+        {
+            using var source = Image.FromStream(new MemoryStream(bytes));
+            var old = _lastImage.Image;
+            _lastImage.Image = new Bitmap(source);
+            old?.Dispose();
+            _lastImage.Visible = true;
+            _shownImage = bytes;
+        }
+        catch (ArgumentException)
+        {
+            _lastImage.Visible = false; // not a decodable image
+        }
     }
 
     private static string? SelectedTag(ListView list) => list.SelectedItems.Count > 0 ? list.SelectedItems[0].Tag as string : null;
@@ -323,6 +352,7 @@ internal sealed class PinDialog : Form
     public PinDialog(string title, string pin, string text)
     {
         Text = title;
+        Icon = AppIcon.Main;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
@@ -389,6 +419,7 @@ internal sealed class PairByIpDialog : Form
     public PairByIpDialog()
     {
         Text = "Vincular por IP";
+        Icon = AppIcon.Main;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = MinimizeBox = false;
         StartPosition = FormStartPosition.CenterParent;
@@ -438,6 +469,7 @@ internal sealed class AddPeerDialog : Form
     public AddPeerDialog(string localDeviceId)
     {
         Text = "Añadir dispositivo manualmente (avanzado)";
+        Icon = AppIcon.Main;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = MinimizeBox = false;
         StartPosition = FormStartPosition.CenterParent;

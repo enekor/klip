@@ -17,7 +17,7 @@ internal sealed class TrayApp : ApplicationContext
     private readonly NotifyIcon _tray;
     private readonly ToolStripMenuItem _syncItem;
     private readonly ToolStripMenuItem _autostartItem;
-    private readonly Icon _iconOn = TrayIcons.Create(active: true);
+    private readonly Icon _iconOn = new(AppIcon.Main, SystemInformation.SmallIconSize);
     private readonly Icon _iconOff = TrayIcons.Create(active: false);
     private readonly RegisteredWaitHandle _showWait;
     private ConfigWindow? _configWindow;
@@ -115,15 +115,17 @@ internal sealed class TrayApp : ApplicationContext
         _configWindow?.RefreshAll();
     }
 
-    private async void OnLocalCopy(string? text, bool sensitive)
+    private async void OnLocalCopy(ClipboardRead read)
     {
-        if (sensitive)
+        if (read.Sensitive)
         {
             FileLog.Write("Contenido sensible detectado en el portapapeles: no se envía");
             return;
         }
-        if (text is null) return;
-        var outcome = await _node.SendClipboardAsync(text);
+        SendOutcome outcome;
+        if (read.Text is not null) outcome = await _node.SendClipboardAsync(read.Text);
+        else if (read.Png is not null) outcome = await _node.SendImageAsync(read.Png, "image/png");
+        else return;
         if (outcome.Decision == OutgoingDecision.Send && outcome.Results.Count > 0 && !outcome.AnyOk)
         {
             FileLog.Write("Ningún dispositivo recibió la copia: " + string.Join(", ", outcome.Results.Select(r => $"{r.Name}: {r.Error}")));
@@ -247,6 +249,12 @@ internal sealed class TrayApp : ApplicationContext
         _monitor.Dispose();
         ExitThread();
     }
+}
+
+/// <summary>The "K" icon embedded in the executable (same artwork as Android and Linux).</summary>
+internal static class AppIcon
+{
+    public static readonly Icon Main = new(typeof(AppIcon).Assembly.GetManifestResourceStream("klip.ico")!);
 }
 
 internal static class TrayIcons
