@@ -253,5 +253,15 @@
         }
       }
     ]
+  },
+  "introduction": {
+    "encKey": "edcd83c83ca9ca57040ed29483a712a2404bdeda573574e7112e5b8efd22812e",
+    "introducerId": "device-introducer",
+    "memberId": "device-member",
+    "issuedAt": 1763930012345,
+    "iv": "yMnKy8zNzs/Q0dLT",
+    "secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "aad": "/group/introduce\ndevice-introducer\ndevice-member\n1763930012345",
+    "ciphertext": "v638PI4SqQEUjZvs8AU9vLdZgq0LP9dmJZyeESg87dbTyGr5r3NVN9abKiKab2GZ"
   }
 }

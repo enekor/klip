@@ -125,6 +125,19 @@ public class TestVectorsTests
     }
 
     [Fact]
+    public void IntroductionSecret()
+    {
+        var e = V.GetProperty("introduction");
+        var member = new MemberInfo { DeviceId = S(e, "memberId"), DeviceName = "M", Platform = "android", HttpPort = 8765, Host = "10.0.0.2" };
+        var issuedAt = e.GetProperty("issuedAt").GetInt64();
+        Assert.Equal(S(e, "aad"), Encoding.UTF8.GetString(Introductions.Aad(S(e, "introducerId"), member.DeviceId, issuedAt)));
+        var sealedReq = Introductions.Seal(Hex(e, "encKey"), S(e, "introducerId"), member, issuedAt, Hex(e, "secret"), B64(e, "iv"));
+        Assert.Equal(S(e, "ciphertext"), sealedReq.Ciphertext);
+        Assert.Equal(S(e, "secret"), Convert.ToHexStringLower(Introductions.Open(Hex(e, "encKey"), S(e, "introducerId"), sealedReq)));
+        Assert.Throws<KlipCryptoException>(() => Introductions.Open(Hex(e, "encKey"), "someone-else", sealedReq));
+    }
+
+    [Fact]
     public void EnvelopeRoundTrip()
     {
         var keys = PairKeys.Derive(PairKeys.NewRandomSecret());
