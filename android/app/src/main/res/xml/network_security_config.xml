@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Klip talks plain HTTP inside the LAN (IPs are not known in advance, so domain-config is not usable).
+  Confidentiality and integrity come from the protocol itself: HMAC-signed requests and AES-GCM payloads.
+-->
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <base-config cleartextTrafficPermitted="true" tools:ignore="InsecureBaseConfiguration" />
+</network-security-config>

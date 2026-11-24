@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Klip</string>
+    <string name="tile_label">Enviar portapapeles</string>
+    <string name="share_label">Klip</string>
+    <string name="process_text_label">Enviar con Klip</string>
+</resources>
