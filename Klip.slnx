@@ -5,6 +5,11 @@
     <Project Path="core-dotnet/Klip.Node.Tests/Klip.Node.Tests.csproj" />
     <Project Path="core-dotnet/Klip.Node/Klip.Node.csproj" />
   </Folder>
+  <Folder Name="/linux/">
+    <Project Path="linux/Klip.Linux.Platform.Tests/Klip.Linux.Platform.Tests.csproj" />
+    <Project Path="linux/Klip.Linux.Platform/Klip.Linux.Platform.csproj" />
+    <Project Path="linux/Klip.Linux/Klip.Linux.csproj" />
+  </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Klip.DevPeer/Klip.DevPeer.csproj" />
   </Folder>

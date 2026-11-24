@@ -69,7 +69,9 @@ public sealed class PlainSecretProtector : ISecretProtector
 }
 
 /// <summary>Loads and atomically saves <see cref="NodeConfig"/> as JSON.</summary>
-public sealed class ConfigStore(string path)
+/// <param name="path">Config file.</param>
+/// <param name="defaults">Creates the config on first run (e.g. platform = "linux").</param>
+public sealed class ConfigStore(string path, Func<NodeConfig>? defaults = null)
 {
     private static readonly JsonSerializerOptions Options = new()
     {
@@ -88,13 +90,15 @@ public sealed class ConfigStore(string path)
         {
             if (File.Exists(Path))
             {
-                return JsonSerializer.Deserialize<NodeConfig>(File.ReadAllText(Path), Options) ?? new NodeConfig();
+                return JsonSerializer.Deserialize<NodeConfig>(File.ReadAllText(Path), Options) ?? CreateDefault();
             }
-            var config = new NodeConfig();
+            var config = CreateDefault();
             SaveLocked(config);
             return config;
         }
     }
+
+    private NodeConfig CreateDefault() => defaults?.Invoke() ?? new NodeConfig();
 
     public void Save(NodeConfig config)
     {
