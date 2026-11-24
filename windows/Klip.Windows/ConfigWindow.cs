@@ -193,6 +193,7 @@ internal sealed class ConfigWindow : Form
     {
         "android" => "Android",
         "windows" => "Windows",
+        "linux" => "Linux",
         "devpeer" => "DevPeer",
         _ => p,
     };
@@ -443,7 +444,7 @@ internal sealed class AddPeerDialog : Form
         AutoSize = true;
         AutoSizeMode = AutoSizeMode.GrowAndShrink;
         Font = new Font("Segoe UI", 9.5f);
-        _platform.Items.AddRange(["android", "windows", "devpeer", "unknown"]);
+        _platform.Items.AddRange(["android", "windows", "linux", "devpeer", "unknown"]);
         _platform.SelectedIndex = 0;
 
         var t = new TableLayoutPanel { AutoSize = true, ColumnCount = 3, Padding = new Padding(10), Dock = DockStyle.Fill };

@@ -421,6 +421,7 @@ private fun PinDialog(title: String, pin: String, text: String, onAccept: () -> 
 private fun platformLabel(p: String) = when (p) {
     "android" -> "Android"
     "windows" -> "Windows"
+    "linux" -> "Linux"
     "devpeer" -> "DevPeer"
     else -> p
 }
