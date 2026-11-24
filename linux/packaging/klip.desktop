@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=Klip
+GenericName=Sincronizador de portapapeles
+Comment=Comparte el portapapeles entre tus dispositivos en la red local
+Exec=klip
+Icon=klip
+Terminal=false
+Categories=Utility;Network;
+Keywords=clipboard;portapapeles;sync;android;
+StartupWMClass=klip
+Actions=send-clipboard;
+
+[Desktop Action send-clipboard]
+Name=Enviar portapapeles
+Exec=klip --send-clipboard
