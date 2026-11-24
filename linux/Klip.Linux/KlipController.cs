@@ -113,8 +113,10 @@ internal sealed class KlipController : IAsyncDisposable
                 FileLog.Write("Contenido sensible en el portapapeles: no se envía");
                 return Report(manual, "Contenido sensible: no se envía");
             }
-            if (content.Text is null) return Report(manual, "El portapapeles no contiene texto");
-            var outcome = await Node.SendClipboardAsync(content.Text);
+            SendOutcome outcome;
+            if (content.Text is not null) outcome = await Node.SendClipboardAsync(content.Text);
+            else if (content.Image is not null) outcome = await Node.SendImageAsync(content.Image, content.ImageMimeType!);
+            else return Report(manual, "El portapapeles no contiene texto ni imagen");
             var message = outcome.Decision switch
             {
                 OutgoingDecision.Send when outcome.Results.Count == 0 => "No hay dispositivos vinculados activos",
@@ -159,6 +161,12 @@ internal sealed class KlipController : IAsyncDisposable
         {
             if (owner.Clipboard is null) throw new InvalidOperationException(owner.ClipboardProblem);
             owner.Clipboard.WriteAsync(text).GetAwaiter().GetResult();
+        }
+
+        public void WriteImage(byte[] data, string mimeType)
+        {
+            if (owner.Clipboard is null) throw new InvalidOperationException(owner.ClipboardProblem);
+            owner.Clipboard.WriteImageAsync(data, mimeType).GetAwaiter().GetResult();
         }
     }
 }

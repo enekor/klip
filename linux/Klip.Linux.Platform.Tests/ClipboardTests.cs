@@ -38,6 +38,21 @@ public abstract class ClipboardContract
     }
 
     [Fact]
+    public async Task ImagesRoundTripExactBytes()
+    {
+        using var cb = Create();
+        if (cb is null) return;
+        var png = Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==");
+        await cb.WriteImageAsync(png, "image/png");
+        await Task.Delay(200);
+        var read = await cb.ReadAsync();
+        Assert.Null(read.Text);
+        Assert.Equal("image/png", read.ImageMimeType);
+        Assert.Equal(png, read.Image);
+    }
+
+    [Fact]
     public async Task WatchReportsExternalChanges()
     {
         using var cb = Create();

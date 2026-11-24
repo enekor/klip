@@ -17,6 +17,8 @@ internal sealed class MainWindow : Window
     private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap, MaxWidth = 640 };
     private readonly TextBlock _sendMode = new() { TextWrapping = TextWrapping.Wrap, MaxWidth = 640 };
     private readonly TextBlock _lastReceived = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly Avalonia.Controls.Image _lastImage = new() { MaxWidth = 240, MaxHeight = 160, HorizontalAlignment = HorizontalAlignment.Left, IsVisible = false };
+    private byte[]? _shownImage;
     private readonly TextBlock _activity = new() { Foreground = Brushes.Gray, Margin = new Thickness(0, 8, 0, 0) };
     private readonly ToggleSwitch _sync = new() { OnContent = "Sincronización activada", OffContent = "Sincronización pausada" };
     private readonly CheckBox _autostart = new() { Content = "Iniciar con la sesión" };
@@ -76,7 +78,7 @@ internal sealed class MainWindow : Window
                             Row(sendNow, testAll),
                         },
                     }),
-                    Card(new StackPanel { Spacing = 4, Children = { Heading("Última recepción"), _lastReceived } }),
+                    Card(new StackPanel { Spacing = 4, Children = { Heading("Última recepción"), _lastReceived, _lastImage } }),
                     Heading("Dispositivos detectados en la red (abre Klip en el otro dispositivo)"),
                     _discovered,
                     pairByIp,
@@ -134,6 +136,7 @@ internal sealed class MainWindow : Window
             _lastReceived.Text = _node.LastReceived is { } r
                 ? $"{DateTimeOffset.FromUnixTimeMilliseconds(r.AtMs).LocalDateTime:HH:mm:ss} · de {r.From}{(r.IsTest ? " · prueba" : "")}\n«{r.Preview(300)}»"
                 : "Nada todavía. Pulsa «Enviar prueba» en otro dispositivo.";
+            ShowLastImage(_node.LastReceived);
 
             _discovered.Children.Clear();
             var found = _node.Discovered;
@@ -148,6 +151,26 @@ internal sealed class MainWindow : Window
         finally
         {
             _refreshing = false;
+        }
+    }
+
+    private void ShowLastImage(ReceivedItem? item)
+    {
+        if (item?.Image is not { } bytes)
+        {
+            _lastImage.IsVisible = false;
+            return;
+        }
+        if (ReferenceEquals(bytes, _shownImage)) return;
+        try
+        {
+            _lastImage.Source = new Avalonia.Media.Imaging.Bitmap(new MemoryStream(bytes));
+            _lastImage.IsVisible = true;
+            _shownImage = bytes;
+        }
+        catch (Exception)
+        {
+            _lastImage.IsVisible = false; // not a decodable image
         }
     }
 

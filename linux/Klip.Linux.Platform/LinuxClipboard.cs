@@ -4,8 +4,8 @@ using System.Text;
 
 namespace Klip.Linux.Platform;
 
-/// <summary>What was read from the clipboard.</summary>
-public sealed record ClipboardContent(string? Text, bool Sensitive);
+/// <summary>What was read from the clipboard: text, or an image (bytes + MIME type).</summary>
+public sealed record ClipboardContent(string? Text, bool Sensitive, byte[]? Image = null, string? ImageMimeType = null);
 
 /// <summary>
 /// Linux clipboard access. Two backends: X11 (xclip + XFixes notifications) and Wayland (wl-clipboard).
@@ -32,6 +32,8 @@ public interface ILinuxClipboard : IDisposable
     Task<ClipboardContent> ReadAsync();
 
     Task WriteAsync(string text);
+
+    Task WriteImageAsync(byte[] data, string mimeType);
 }
 
 public static class LinuxClipboard
@@ -57,6 +59,12 @@ public static class LinuxClipboard
     }
 
     internal static bool IsSecretHint(byte[] value) => Encoding.UTF8.GetString(value).Trim() == "secret";
+
+    /// <summary>Image formats we can send, in order of preference.</summary>
+    internal static readonly string[] ImageTypes = ["image/png", "image/jpeg"];
+
+    internal static bool IsText(string type) =>
+        type.StartsWith("text/plain", StringComparison.Ordinal) || type is "UTF8_STRING" or "STRING" or "TEXT";
 }
 
 /// <summary>Wayland via wl-clipboard. Watching needs the data-control protocol (KDE, wlroots); GNOME lacks it.</summary>
@@ -112,15 +120,28 @@ public sealed class WaylandClipboard : ILinuxClipboard
             var hint = await Shell.RunAsync("wl-paste", ["--no-newline", "--type", LinuxClipboard.PasswordHintTarget]);
             if (hint.Ok && LinuxClipboard.IsSecretHint(hint.Stdout)) return new ClipboardContent(null, true);
         }
-        if (!list.Any(t => t.StartsWith("text/", StringComparison.Ordinal) || t is "UTF8_STRING" or "STRING" or "TEXT"))
-            return new ClipboardContent(null, false); // e.g. an image
-        var text = await Shell.RunAsync("wl-paste", ["--no-newline", "--type", "text"]);
-        return new ClipboardContent(text.Ok ? text.Text : null, false);
+        if (list.Any(LinuxClipboard.IsText))
+        {
+            var text = await Shell.RunAsync("wl-paste", ["--no-newline", "--type", "text"]);
+            return new ClipboardContent(text.Ok ? text.Text : null, false);
+        }
+        if (LinuxClipboard.ImageTypes.FirstOrDefault(list.Contains) is { } imageType)
+        {
+            var image = await Shell.RunAsync("wl-paste", ["--type", imageType], timeoutMs: 15_000);
+            if (image.Ok && image.Stdout.Length > 0) return new ClipboardContent(null, false, image.Stdout, imageType);
+        }
+        return new ClipboardContent(null, false);
     }
 
     public async Task WriteAsync(string text)
     {
         var rc = await Shell.RunDetachedWithInputAsync("wl-copy", ["--type", "text/plain;charset=utf-8"], Encoding.UTF8.GetBytes(text));
+        if (rc != 0) throw new IOException($"wl-copy terminó con código {rc}");
+    }
+
+    public async Task WriteImageAsync(byte[] data, string mimeType)
+    {
+        var rc = await Shell.RunDetachedWithInputAsync("wl-copy", ["--type", mimeType], data);
         if (rc != 0) throw new IOException($"wl-copy terminó con código {rc}");
     }
 
@@ -224,15 +245,29 @@ public sealed class X11Clipboard : ILinuxClipboard
             if (hint.Ok && LinuxClipboard.IsSecretHint(hint.Stdout)) return new ClipboardContent(null, true);
         }
         var target = list.Contains("UTF8_STRING") ? "UTF8_STRING" : list.Contains("text/plain;charset=utf-8") ? "text/plain;charset=utf-8" : list.Contains("STRING") ? "STRING" : null;
-        if (target is null) return new ClipboardContent(null, false); // e.g. an image
-        var text = await Shell.RunAsync("xclip", ["-selection", "clipboard", "-o", "-t", target]);
-        return new ClipboardContent(text.Ok ? text.Text : null, false);
+        if (target is not null)
+        {
+            var text = await Shell.RunAsync("xclip", ["-selection", "clipboard", "-o", "-t", target]);
+            return new ClipboardContent(text.Ok ? text.Text : null, false);
+        }
+        if (LinuxClipboard.ImageTypes.FirstOrDefault(list.Contains) is { } imageType)
+        {
+            var image = await Shell.RunAsync("xclip", ["-selection", "clipboard", "-o", "-t", imageType], timeoutMs: 15_000);
+            if (image.Ok && image.Stdout.Length > 0) return new ClipboardContent(null, false, image.Stdout, imageType);
+        }
+        return new ClipboardContent(null, false);
     }
 
     public async Task WriteAsync(string text)
     {
         // xclip forks into the background and serves the selection until someone else copies.
         var rc = await Shell.RunDetachedWithInputAsync("xclip", ["-selection", "clipboard", "-i", "-t", "UTF8_STRING"], Encoding.UTF8.GetBytes(text));
+        if (rc != 0) throw new IOException($"xclip terminó con código {rc}");
+    }
+
+    public async Task WriteImageAsync(byte[] data, string mimeType)
+    {
+        var rc = await Shell.RunDetachedWithInputAsync("xclip", ["-selection", "clipboard", "-i", "-t", mimeType], data);
         if (rc != 0) throw new IOException($"xclip terminó con código {rc}");
     }
 
