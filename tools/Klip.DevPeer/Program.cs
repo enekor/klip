@@ -17,6 +17,7 @@ if (argv.Count == 0 || argv[0] is "-h" or "--help" or "help")
 
 var command = argv[0];
 argv.RemoveAt(0);
+string? pendingSession = null;
 
 try
 {
@@ -83,13 +84,59 @@ try
             return failed ? 1 : 0;
         }
 
+        case "pair":
+        {
+            await using var node = OpenNode();
+            node.LogMessage += m => Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {m}");
+            var host = Require(argv, "--host");
+            var port = int.Parse(TakeOption(argv, "--port") ?? Protocol.HttpPort.ToString());
+            await node.StartAsync(); // the other side may send group introductions right away
+            var (pairing, error) = await node.StartPairingAsync(host, port);
+            if (pairing is null)
+            {
+                Console.WriteLine($"Error: {error}");
+                return 1;
+            }
+            Console.WriteLine($"PIN: {pairing.Pin} ({pairing.DeviceName}, {pairing.Platform})");
+            if (!argv.Remove("--yes"))
+            {
+                Console.Write("¿Coincide el PIN en el otro dispositivo? [s/N] ");
+                if (Console.ReadLine()?.Trim().ToLowerInvariant() is not ("s" or "si" or "sí" or "y" or "yes"))
+                {
+                    await node.CancelPairingAsync(pairing);
+                    Console.WriteLine("Cancelado.");
+                    return 1;
+                }
+            }
+            Console.WriteLine("Esperando confirmación en el otro dispositivo…");
+            var outcome = await node.ConfirmPairingAsync(pairing);
+            Console.WriteLine($"Resultado: {outcome.Status}{(outcome.Message is null ? "" : $" ({outcome.Message})")}");
+            await Task.Delay(1000); // let group introductions go out
+            return outcome.Ok ? 0 : 1;
+        }
+
         case "listen":
         {
             var clipboard = new ConsoleClipboard();
             await using var node = OpenNode(clipboard);
+            var acceptPairing = argv.Remove("--accept-pairing");
             node.LogMessage += m => Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {m}");
             node.TestReceived += from => Console.WriteLine($"*** Prueba recibida correctamente desde {from} ***");
+            node.PairingOpen = true;
+            node.PairingRequested += p =>
+            {
+                Console.WriteLine($"*** Solicitud de vinculación de {p.DeviceName} ({p.Platform}) — PIN {p.Pin} ***");
+                if (acceptPairing) node.RespondToPairing(p.SessionId, true);
+                else Console.WriteLine("    (escribe 'aceptar' o 'rechazar')");
+                pendingSession = p.SessionId;
+            };
+            node.IncomingPairingFinished += (_, status, name) => Console.WriteLine($"*** Vinculación con {name}: {status} ***");
             await node.StartAsync();
+            if (argv.Remove("--radar"))
+            {
+                node.StartDiscovery();
+                node.DiscoveredChanged += () => Console.WriteLine("Radar: " + string.Join(", ", node.Discovered.Select(d => $"{d.DeviceName} {d.Host}:{d.HttpPort}")));
+            }
             Console.WriteLine($"Escuchando en el puerto {node.HttpPort} como «{node.DeviceName}» ({node.DeviceId}).");
             Console.WriteLine("Escribe una línea y pulsa Enter para enviarla. Ctrl+C para salir.");
             using var cts = new CancellationTokenSource();
@@ -99,6 +146,12 @@ try
                 while (!cts.IsCancellationRequested && await Console.In.ReadLineAsync() is { } line)
                 {
                     if (line.Length == 0) continue;
+                    if (pendingSession is { } sid && line.Trim() is "aceptar" or "rechazar")
+                    {
+                        node.RespondToPairing(sid, line.Trim() == "aceptar");
+                        pendingSession = null;
+                        continue;
+                    }
                     var outcome = await node.SendClipboardAsync(line);
                     Console.WriteLine($"  -> {outcome.Decision}: " + string.Join(", ", outcome.Results.Select(r => $"{r.Name} {(r.Ok ? "OK" : r.Error)}")));
                 }
@@ -149,11 +202,13 @@ static void PrintHelp() => Console.WriteLine("""
       peers                               Lista los dispositivos vinculados
       ping                                Comprueba la conexión con cada dispositivo
       send [--test] [texto]               Envía un texto (o stdin) / una prueba
-      listen                              Recibe copias y las muestra; cada línea escrita se envía
+      pair --host H [--port P] [--yes]    Se vincula por PIN con otro dispositivo (que debe tener Klip abierto)
+      listen [--accept-pairing] [--radar] Recibe copias y solicitudes de vinculación; cada línea escrita se envía
+                                          ('aceptar' / 'rechazar' responde a una solicitud pendiente)
 
-    Ejemplo en el mismo PC que Klip.exe:
+    Ejemplo en el mismo PC que Klip.exe (con la ventana de configuración de Klip abierta):
       KlipDevPeer init --name DevPeer --port 8770
-      KlipDevPeer add-peer --id <ID de Klip> --host 127.0.0.1 --port 8765 --name PC --secret <secreto>
+      KlipDevPeer pair --host 127.0.0.1 --port 8765
       KlipDevPeer listen
     """);
 
