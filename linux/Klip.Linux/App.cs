@@ -51,7 +51,15 @@ internal sealed class App : Application
     {
         IconActive = new WindowIcon(Icons.Render(active: true));
         IconPaused = new WindowIcon(Icons.Render(active: false));
-        _controller = new KlipController();
+        FileLog.Write($"Klip {typeof(App).Assembly.GetName().Version} arrancando…");
+        _ = InitializeAsync();
+        base.OnFrameworkInitializationCompleted();
+    }
+
+    private async Task InitializeAsync()
+    {
+        // Off the UI thread: reading the keyring or probing D-Bus must never freeze the window.
+        _controller = await Task.Run(() => new KlipController());
         _controller.StateChanged += () => Dispatcher.UIThread.Post(UpdateState);
         _controller.Node.Received += item =>
         {
@@ -59,26 +67,14 @@ internal sealed class App : Application
         };
         _controller.Node.PairingRequested += p => Dispatcher.UIThread.Post(() => ShowIncomingPairing(p));
         _controller.Node.IncomingPairingFinished += (id, status, name) => Dispatcher.UIThread.Post(() => OnIncomingFinished(id, status, name));
-        _ = InitializeAsync();
-        base.OnFrameworkInitializationCompleted();
-    }
 
-    private async Task InitializeAsync()
-    {
         _hasTray = await DesktopSession.HasTrayAsync();
         if (_hasTray) CreateTray();
         try { if (_controller.Node.StartWithWindows) Autostart.Apply(true); }
         catch (Exception e) { FileLog.Write("Autostart: " + e.Message); }
 
-        try
-        {
-            await _controller.StartAsync();
-        }
-        catch (Exception e)
-        {
-            FileLog.Write("No se pudo arrancar: " + e);
-            Notifier.Show("Klip", $"No se pudo abrir el puerto {_controller.Node.HttpPort}: {e.Message}");
-        }
+        await Task.Run(_controller.StartAsync);
+        if (_controller.ServerError is { } error) Notifier.Show("Klip", "No se puede recibir: " + error);
 
         _current = this;
         if (!StartHidden || !_hasTray) ShowWindow();

@@ -14,8 +14,8 @@ internal sealed class MainWindow : Window
     private readonly SyncNode _node;
     private readonly TextBox _name = new() { Width = 280 };
     private readonly TextBlock _address = new();
-    private readonly TextBlock _status = new();
-    private readonly TextBlock _sendMode = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap, MaxWidth = 640 };
+    private readonly TextBlock _sendMode = new() { TextWrapping = TextWrapping.Wrap, MaxWidth = 640 };
     private readonly TextBlock _lastReceived = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _activity = new() { Foreground = Brushes.Gray, Margin = new Thickness(0, 8, 0, 0) };
     private readonly ToggleSwitch _sync = new() { OnContent = "Sincronización activada", OffContent = "Sincronización pausada" };
@@ -125,8 +125,9 @@ internal sealed class MainWindow : Window
             var ips = LanAddress.LocalIPv4();
             _address.Text = (ips.Count == 0 ? "sin red" : string.Join(", ", ips)) + $"  ·  puerto {_node.HttpPort}";
             var on = _node.SyncEnabled && _node.IsServerRunning;
-            _status.Text = on ? "Sincronización activada" : "Sincronización pausada";
-            _status.Foreground = on ? Brushes.SeaGreen : Brushes.Gray;
+            var error = _node.SyncEnabled ? _app.Controller.ServerError : null;
+            _status.Text = on ? "Sincronización activada" : error is not null ? "No se puede recibir: " + error : "Sincronización pausada";
+            _status.Foreground = on ? Brushes.SeaGreen : error is not null ? Brushes.IndianRed : Brushes.Gray;
             _sync.IsChecked = _node.SyncEnabled;
             _autostart.IsChecked = _node.StartWithWindows;
             _sendMode.Text = SendModeText();

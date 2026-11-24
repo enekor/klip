@@ -18,6 +18,9 @@ internal sealed class KlipController : IAsyncDisposable
     /// <summary>True while copies are sent automatically (watching the clipboard).</summary>
     public bool AutoSend { get; private set; }
 
+    /// <summary>Why the receiver could not start (e.g. port in use), or null.</summary>
+    public string? ServerError { get; private set; }
+
     public event Action? StateChanged;
 
     public KlipController()
@@ -39,7 +42,19 @@ internal sealed class KlipController : IAsyncDisposable
     {
         FileLog.Write($"Klip iniciado. deviceId={Node.DeviceId} sesión={DesktopSession.Kind} escritorio={DesktopSession.Desktop} " +
                       $"portapapeles={Clipboard?.Name ?? "ninguno"} secretos={Secrets.Storage}");
-        await Node.StartAsync();
+        try
+        {
+            await Node.StartAsync();
+            ServerError = null;
+        }
+        catch (Exception e)
+        {
+            // Sending still works without the receiver: keep going.
+            ServerError = e is IOException && e.Message.Contains("address already in use", StringComparison.OrdinalIgnoreCase)
+                ? $"El puerto {Node.HttpPort} está ocupado (¿hay otra copia de Klip abierta?)"
+                : e.Message;
+            FileLog.Write("No se pudo arrancar el receptor: " + e);
+        }
         if (Node.SyncEnabled) await StartWatchingAsync();
         StateChanged?.Invoke();
     }
@@ -47,7 +62,16 @@ internal sealed class KlipController : IAsyncDisposable
     /// <summary>The single switch (tray and window): server + clipboard watching.</summary>
     public async Task SetSyncAsync(bool enabled)
     {
-        await Node.SetSyncEnabledAsync(enabled);
+        try
+        {
+            await Node.SetSyncEnabledAsync(enabled);
+            ServerError = null;
+        }
+        catch (Exception e)
+        {
+            ServerError = e.Message;
+            FileLog.Write("No se pudo cambiar la sincronización: " + e);
+        }
         if (enabled) await StartWatchingAsync();
         else
         {

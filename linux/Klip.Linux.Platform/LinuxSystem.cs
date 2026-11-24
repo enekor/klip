@@ -80,17 +80,18 @@ public sealed class LinuxSecretProtector : ISecretProtector
 
     private byte[] LoadOrCreateKey()
     {
-        if (Shell.Exists("secret-tool"))
+        // The keyring needs a D-Bus session; without one secret-tool would just wait for its timeout.
+        if (Shell.Exists("secret-tool") && Environment.GetEnvironmentVariable("DBUS_SESSION_BUS_ADDRESS") is { Length: > 0 })
         {
-            var found = Shell.RunAsync("secret-tool", ["lookup", .. Attributes], timeoutMs: 30_000).GetAwaiter().GetResult();
+            var found = Shell.RunAsync("secret-tool", ["lookup", .. Attributes], timeoutMs: 5_000).GetAwaiter().GetResult();
             if (found.Ok && TryDecode(found.Text.Trim(), out var existing))
             {
                 Storage = "llavero del escritorio";
                 return existing;
             }
             var key = KlipCrypto.RandomBytes(32);
-            var stored = Shell.RunAsync("secret-tool", ["store", "--label=Klip (claves de vinculación)", .. Attributes],
-                Encoding.UTF8.GetBytes(Convert.ToBase64String(key)), timeoutMs: 30_000).GetAwaiter().GetResult();
+            var stored = Shell.RunAsync("secret-tool", ["store", "--label=Klip pairing keys", .. Attributes],
+                Encoding.UTF8.GetBytes(Convert.ToBase64String(key)), timeoutMs: 5_000).GetAwaiter().GetResult();
             if (stored.Ok)
             {
                 Storage = "llavero del escritorio";
@@ -175,9 +176,10 @@ public static class DesktopSession
     /// <summary>Whether a StatusNotifierItem host exists (KDE, or GNOME with the AppIndicator extension).</summary>
     public static async Task<bool> HasTrayAsync()
     {
+        if (Environment.GetEnvironmentVariable("DBUS_SESSION_BUS_ADDRESS") is not { Length: > 0 }) return false; // no tray without D-Bus
         if (!Shell.Exists("gdbus")) return true; // cannot tell: assume yes
         var r = await Shell.RunAsync("gdbus", ["call", "--session", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus",
-            "--method", "org.freedesktop.DBus.NameHasOwner", "org.kde.StatusNotifierWatcher"]);
+            "--method", "org.freedesktop.DBus.NameHasOwner", "org.kde.StatusNotifierWatcher"], timeoutMs: 3_000);
         return !r.Ok || r.Text.Contains("true");
     }
 }
