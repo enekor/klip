@@ -83,7 +83,10 @@ class InteropTest {
 
     @AfterTest
     fun cleanup() {
-        processes.forEach { it.destroy() }
+        processes.forEach { p ->
+            p.destroy()
+            if (!p.waitFor(3, TimeUnit.SECONDS)) p.destroyForcibly()
+        }
         nodes.forEach { it.close() }
         dir.deleteRecursively()
     }

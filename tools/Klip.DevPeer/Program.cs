@@ -166,6 +166,9 @@ try
             Console.WriteLine("Escribe una línea y pulsa Enter para enviarla. Ctrl+C para salir.");
             using var cts = new CancellationTokenSource();
             Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+            // Also stop cleanly on SIGTERM (kill, test harnesses, service managers).
+            using var sigterm = System.Runtime.InteropServices.PosixSignalRegistration.Create(
+                System.Runtime.InteropServices.PosixSignal.SIGTERM, ctx => { ctx.Cancel = true; cts.Cancel(); });
             var input = Task.Run(async () =>
             {
                 while (!cts.IsCancellationRequested && await Console.In.ReadLineAsync() is { } line)
