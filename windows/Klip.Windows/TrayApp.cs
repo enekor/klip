@@ -29,9 +29,14 @@ internal sealed class TrayApp : ApplicationContext
         using (new Control()) { }
         _ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
 
-        _node = new SyncNode(new ConfigStore(AppPaths.Config), new DpapiProtector(), new WindowsClipboardWriter(_ui));
+        _node = new SyncNode(new ConfigStore(AppPaths.Config), new DpapiProtector(), new WindowsClipboardWriter(_ui))
+        {
+            Resolver = new WindowsDnsSd(FileLog.Write, LanAddress.PreferredIPv4),
+        };
         _node.LogMessage += FileLog.Write;
         _node.TestReceived += from => _ui.Post(_ => Balloon("Prueba recibida", $"Prueba recibida correctamente desde {from}"), null);
+        _node.PairingRequested += p => _ui.Post(_ => ShowIncomingPairing(p), null);
+        _node.IncomingPairingFinished += (sessionId, status, name) => _ui.Post(_ => OnIncomingPairingFinished(sessionId, status, name), null);
 
         _monitor = new ClipboardMonitor();
         _monitor.Copied += OnLocalCopy;
@@ -133,6 +138,40 @@ internal sealed class TrayApp : ApplicationContext
         }
         var lines = outcome.Results.Select(r => r.Ok ? $"✔ {r.Name}: Enviado ({r.HttpStatus} OK)" : $"✖ {r.Name}: {r.Error}");
         Balloon("Enviar prueba", string.Join("\n", lines), outcome.Results.All(r => r.Ok) ? ToolTipIcon.Info : ToolTipIcon.Warning);
+    }
+
+    // ---------- Incoming pairing (only possible while the configuration window is open) ----------
+
+    private PinDialog? _incomingDialog;
+    private string? _incomingSession;
+
+    private void ShowIncomingPairing(IncomingPairing p)
+    {
+        _incomingDialog?.CloseExternally();
+        var dialog = new PinDialog($"{p.DeviceName} quiere vincularse", p.Pin, $"Acepta solo si {p.DeviceName} muestra el mismo código.");
+        _incomingDialog = dialog;
+        _incomingSession = p.SessionId;
+        dialog.FormClosed += (_, _) =>
+        {
+            if (!dialog.ClosedExternally) _node.RespondToPairing(p.SessionId, dialog.DialogResult == DialogResult.OK);
+            if (dialog.DialogResult == DialogResult.OK && !dialog.ClosedExternally)
+                Balloon("Klip", $"Esperando la confirmación en {p.DeviceName}…");
+            if (_incomingDialog == dialog) _incomingDialog = null;
+            dialog.Dispose();
+        };
+        dialog.Show(_configWindow is { IsDisposed: false } owner ? owner : null);
+        dialog.Activate();
+    }
+
+    private void OnIncomingPairingFinished(string sessionId, PairingStatus status, string name)
+    {
+        if (_incomingSession == sessionId) _incomingDialog?.CloseExternally();
+        switch (status)
+        {
+            case PairingStatus.Accepted: Balloon("Klip", $"Vinculado con {name}"); break;
+            case PairingStatus.Cancelled: Balloon("Klip", $"{name} canceló la vinculación", ToolTipIcon.Warning); break;
+            case PairingStatus.TimedOut: Balloon("Klip", $"La vinculación con {name} caducó", ToolTipIcon.Warning); break;
+        }
     }
 
     private void OpenConfig()

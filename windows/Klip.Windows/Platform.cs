@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using System.Net.NetworkInformation;
-using System.Net.Sockets;
 using System.Security.Cryptography;
 using Klip.Core;
 using Klip.Node;
@@ -119,23 +117,6 @@ internal static class Firewall
 
 internal static class NetworkInfo
 {
-    private static readonly string[] VirtualHints = ["virtual", "hyper-v", "vethernet", "wsl", "vmware", "virtualbox", "vpn", "tap", "tun", "loopback"];
-
     /// <summary>IPv4 addresses of physical, up interfaces with a default gateway.</summary>
-    public static IReadOnlyList<string> LocalIPv4()
-    {
-        var result = new List<string>();
-        foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
-        {
-            if (nic.OperationalStatus != OperationalStatus.Up) continue;
-            var desc = (nic.Name + " " + nic.Description).ToLowerInvariant();
-            if (VirtualHints.Any(desc.Contains)) continue;
-            var props = nic.GetIPProperties();
-            if (props.GatewayAddresses.All(g => g.Address.AddressFamily != AddressFamily.InterNetwork)) continue;
-            result.AddRange(props.UnicastAddresses
-                .Where(a => a.Address.AddressFamily == AddressFamily.InterNetwork)
-                .Select(a => a.Address.ToString()));
-        }
-        return result;
-    }
+    public static IReadOnlyList<string> LocalIPv4() => LanAddress.LocalIPv4().Select(a => a.ToString()).ToList();
 }
