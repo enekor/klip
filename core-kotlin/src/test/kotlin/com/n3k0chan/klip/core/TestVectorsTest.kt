@@ -140,6 +140,24 @@ class TestVectorsTest {
     }
 
     @Test
+    fun imageEnvelope() {
+        val env = v["imageEnvelope"]!!.jsonObject
+        val key = env.str("encKey").hexToBytes()
+        val payload = EnvelopeCodec.open(key, EnvelopeCodec.decode(env["valid"]!!.jsonObject["envelope"].toString()))
+        assertTrue(payload.isImage)
+        assertEquals("image/png", payload.mimeType)
+        assertContentEquals(env.str("image").base64ToBytes(), payload.imageBytes())
+        for (bad in env["mustReject"]!!.jsonArray.map { it.jsonObject }) {
+            assertFailsWith<EnvelopeException>(bad.str("reason")) {
+                EnvelopeCodec.open(key, EnvelopeCodec.decode(bad["envelope"].toString()))
+            }
+        }
+        val bytes = env.str("image").base64ToBytes()
+        val sealed = EnvelopeCodec.seal(key, "dev", ClipboardPayload.image(bytes, "image/png", "PC"))
+        assertContentEquals(bytes, EnvelopeCodec.open(key, EnvelopeCodec.decode(EnvelopeCodec.encode(sealed))).imageBytes())
+    }
+
+    @Test
     fun envelopeRoundTrip() {
         val keys = PairKeys.derive(PairKeys.newRandomSecret())
         val sealed = EnvelopeCodec.seal(keys.encKey, "dev-a", ClipboardPayload.text("hola\r\nmundo", "PC", isTest = true))

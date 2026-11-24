@@ -37,8 +37,11 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 /** Writes received text to the local clipboard. */
-fun interface ClipboardWriter {
+interface ClipboardWriter {
     fun writeText(text: String)
+
+    /** Places an image ("image/png" or "image/jpeg") on the clipboard. */
+    fun writeImage(data: ByteArray, mimeType: String)
 }
 
 /** mDNS/DNS-SD integration (docs/protocol.md §8.7). Optional. */
@@ -74,17 +77,33 @@ internal data class Reply(val status: Int, val body: Any? = null) {
 }
 
 /** Something received from another device. */
-data class ReceivedItem(val from: String, val content: String, val isTest: Boolean, val atMs: Long) {
+class ReceivedItem(
+    val from: String,
+    val content: String,
+    val isTest: Boolean,
+    val atMs: Long,
+    val image: ByteArray? = null,
+    val mimeType: String? = null,
+) {
+    val isImage get() = image != null
+
     /** Single-line preview for the UI. */
     fun preview(max: Int = 120): String {
+        if (image != null) return "[Imagen ${mimeType?.removePrefix("image/")?.uppercase()}, ${formatSize(image.size.toLong())}]"
         val oneLine = content.replace("\r\n", "\n").replace('\r', '\n').replace("\n", " ⏎ ")
         return if (oneLine.length <= max) oneLine else oneLine.take(max) + "…"
+    }
+
+    companion object {
+        fun formatSize(bytes: Long): String =
+            if (bytes >= 1024 * 1024) String.format(java.util.Locale.ROOT, "%.1f MB", bytes / 1024.0 / 1024.0) else "${maxOf(1, bytes / 1024)} KB"
     }
 }
 
 sealed interface NodeEvent {
     data class TestReceived(val from: String, val content: String) : NodeEvent
     data class ContentReceived(val from: String, val content: String) : NodeEvent
+    data class ImageReceived(val from: String, val bytes: Int) : NodeEvent
     data class PairingRequested(val pairing: IncomingPairing) : NodeEvent
     data class IncomingPairingFinished(val sessionId: String, val status: PairingStatus, val deviceName: String) : NodeEvent
     data class Log(val message: String) : NodeEvent
@@ -302,11 +321,22 @@ class SyncNode(
     suspend fun sendClipboard(content: String, isSensitive: Boolean = false, isTest: Boolean = false, onlyDeviceId: String? = null): SendOutcome {
         val decision = state.evaluateOutgoing(content, isTest, isSensitive, syncEnabled)
         if (decision != OutgoingDecision.SEND) return SendOutcome(decision, emptyList())
+        return sendPayload(ClipboardPayload.text(content, deviceName, isTest), decision, onlyDeviceId)
+    }
 
+    /** Sends an image ("image/png" or "image/jpeg") with the same anti-loop rules as text. */
+    suspend fun sendImage(image: ByteArray, mimeType: String, onlyDeviceId: String? = null): SendOutcome {
+        require(mimeType in com.n3k0chan.klip.core.Content.IMAGE_MIME_TYPES) { "Formato no soportado: $mimeType" }
+        val decision = state.evaluateOutgoingImage(image, syncEnabled)
+        if (decision != OutgoingDecision.SEND) return SendOutcome(decision, emptyList())
+        return sendPayload(ClipboardPayload.image(image, mimeType, deviceName), decision, onlyDeviceId)
+    }
+
+    private suspend fun sendPayload(payload: ClipboardPayload, decision: OutgoingDecision, onlyDeviceId: String?): SendOutcome {
+        val isTest = payload.isTest
         val targets = peersWithKeys { if (onlyDeviceId == null) it.enabled else it.deviceId == onlyDeviceId }
         if (targets.isEmpty()) return SendOutcome(decision, emptyList())
 
-        val payload = ClipboardPayload.text(content, deviceName, isTest)
         val messageId = UUID.randomUUID().toString()
         val results = targets.map { (peer, k) -> scope.async { sendWithResolve(peer, k, payload, messageId) } }.awaitAll()
 
@@ -317,7 +347,7 @@ class SyncNode(
         } else {
             publishPeers()
         }
-        log("Envío ${if (isTest) "de prueba " else ""}a ${results.count { it.ok }}/${results.size} dispositivos")
+        log("Envío ${if (isTest) "de prueba " else if (payload.isImage) "de imagen " else ""}a ${results.count { it.ok }}/${results.size} dispositivos")
         return SendOutcome(decision, results)
     }
 
@@ -365,16 +395,22 @@ class SyncNode(
 
         markSeen(deviceId, remoteIp)
         try {
-            clipboard.writeText(payload.content)
+            if (payload.isImage) clipboard.writeImage(payload.imageBytes(), payload.mimeType!!) else clipboard.writeText(payload.content)
         } catch (e: Exception) {
             log("No se pudo escribir en el portapapeles: ${e.message}")
         }
         update { it }
 
-        log("Recibido de ${payload.originDeviceName}${if (payload.isTest) " (prueba)" else ""}: ${payload.content.length} caracteres")
-        _lastReceived.value = ReceivedItem(payload.originDeviceName, payload.content, payload.isTest, now)
+        log(
+            if (payload.isImage) "Recibida imagen de ${payload.originDeviceName}: ${ReceivedItem.formatSize(payload.imageBytes().size.toLong())}"
+            else "Recibido de ${payload.originDeviceName}${if (payload.isTest) " (prueba)" else ""}: ${payload.content.length} caracteres"
+        )
+        _lastReceived.value =
+            if (payload.isImage) ReceivedItem(payload.originDeviceName, "", false, now, payload.imageBytes(), payload.mimeType)
+            else ReceivedItem(payload.originDeviceName, payload.content, payload.isTest, now)
         emit(
             if (payload.isTest) NodeEvent.TestReceived(payload.originDeviceName, payload.content)
+            else if (payload.isImage) NodeEvent.ImageReceived(payload.originDeviceName, payload.imageBytes().size)
             else NodeEvent.ContentReceived(payload.originDeviceName, payload.content)
         )
         return Reply(200)

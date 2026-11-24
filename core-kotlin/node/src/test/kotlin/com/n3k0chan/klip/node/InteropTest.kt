@@ -39,14 +39,14 @@ class InteropTest {
         }
 
         fun run(vararg args: String): Pair<Int, String> {
-            val p = ProcessBuilder(listOf(devPeer!!, "--config", config) + args).redirectErrorStream(true).start()
+            val p = ProcessBuilder(listOf(devPeer!!, "--config", config) + args).directory(dir).redirectErrorStream(true).start()
             val out = p.inputStream.bufferedReader().readText()
             assertTrue(p.waitFor(90, TimeUnit.SECONDS), "DevPeer ${args.first()} timed out")
             return p.exitValue() to out
         }
 
         fun listen(vararg extra: String) {
-            val p = ProcessBuilder(listOf(devPeer!!, "--config", config, "listen") + extra).redirectErrorStream(true).start()
+            val p = ProcessBuilder(listOf(devPeer!!, "--config", config, "listen") + extra).directory(dir).redirectErrorStream(true).start()
             processes += p
             process = p
             Thread { p.inputStream.bufferedReader().forEachLine { output.appendLine(it) } }.apply { isDaemon = true }.start()
@@ -112,6 +112,20 @@ class InteropTest {
         // C# -> Kotlin
         win.type("hola desde C# 😀")
         waitUntil("Kotlin received the text") { clip.writes.contains("hola desde C# 😀") }
+
+        // Images both ways
+        val png = ByteArray(200_000).also { java.util.Random(7).nextBytes(it) }
+        assertTrue(k.sendImage(png, "image/png").anyOk)
+        waitUntil("C# saved the image") { win.output.contains("imagen image/png, 200000 bytes") }
+        val saved = Regex("guardada en (received-[0-9-]+\\.png)").find(win.output)!!.groupValues[1]
+        assertTrue(png.contentEquals(File(dir, saved).readBytes()), "same bytes on the C# side")
+        val jpeg = ByteArray(150_000).also { java.util.Random(8).nextBytes(it) }
+        File(dir, "from-dotnet.jpg").writeBytes(jpeg)
+        val (code, out) = win.run("send-image", File(dir, "from-dotnet.jpg").path)
+        assertEquals(0, code, out)
+        waitUntil("Kotlin got the image") { clip.images.isNotEmpty() }
+        assertTrue(jpeg.contentEquals(clip.images.single().first))
+        assertEquals("image/jpeg", clip.images.single().second)
 
         // Test message and ping
         assertTrue(k.sendTest().anyOk)

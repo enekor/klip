@@ -20,9 +20,27 @@ public sealed record Envelope
 public sealed record ClipboardPayload
 {
     public const string TypeText = "text";
+    public const string TypeImage = "image";
 
     [JsonPropertyName("type")] public string Type { get; init; } = TypeText;
+
+    /// <summary>The text; empty for images.</summary>
     [JsonPropertyName("content")] public required string Content { get; init; }
+
+    /// <summary>Images only: "image/png" or "image/jpeg".</summary>
+    [JsonPropertyName("mimeType")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? MimeType { get; init; }
+
+    /// <summary>Images only: the bytes, Base64.</summary>
+    [JsonPropertyName("data")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Data { get; init; }
+
+    [JsonIgnore] public bool IsImage => Type == TypeImage;
+
+    /// <summary>Decoded image bytes (images only).</summary>
+    public byte[] ImageBytes() => Convert.FromBase64String(Data ?? "");
     [JsonPropertyName("contentHash")] public required string ContentHash { get; init; }
     [JsonPropertyName("originDeviceName")] public required string OriginDeviceName { get; init; }
     [JsonPropertyName("isTest")] public bool IsTest { get; init; }
@@ -33,6 +51,16 @@ public sealed record ClipboardPayload
         ContentHash = Core.Content.Hash(content),
         OriginDeviceName = originDeviceName,
         IsTest = isTest,
+    };
+
+    public static ClipboardPayload Image(byte[] bytes, string mimeType, string originDeviceName) => new()
+    {
+        Type = TypeImage,
+        Content = "",
+        MimeType = mimeType,
+        Data = Convert.ToBase64String(bytes),
+        ContentHash = Core.Content.HashBytes(bytes),
+        OriginDeviceName = originDeviceName,
     };
 }
 
@@ -111,10 +139,24 @@ public static class EnvelopeCodec
         {
             throw new EnvelopeException(EnvelopeException.Reason.Malformed, "Invalid payload JSON", e);
         }
-        if (payload.Type != ClipboardPayload.TypeText)
-            throw new EnvelopeException(EnvelopeException.Reason.UnsupportedType, $"Unsupported type {payload.Type}");
-        if (payload.ContentHash != Content.Hash(payload.Content))
-            throw new EnvelopeException(EnvelopeException.Reason.HashMismatch, "contentHash does not match content");
+        switch (payload.Type)
+        {
+            case ClipboardPayload.TypeText:
+                if (payload.ContentHash != Content.Hash(payload.Content))
+                    throw new EnvelopeException(EnvelopeException.Reason.HashMismatch, "contentHash does not match content");
+                break;
+            case ClipboardPayload.TypeImage:
+                if (payload.MimeType is null || !Content.ImageMimeTypes.Contains(payload.MimeType))
+                    throw new EnvelopeException(EnvelopeException.Reason.UnsupportedType, $"Unsupported image type {payload.MimeType}");
+                byte[] bytes;
+                try { bytes = payload.ImageBytes(); }
+                catch (FormatException e) { throw new EnvelopeException(EnvelopeException.Reason.Malformed, "Invalid image data", e); }
+                if (bytes.Length == 0 || payload.ContentHash != Content.HashBytes(bytes))
+                    throw new EnvelopeException(EnvelopeException.Reason.HashMismatch, "contentHash does not match image");
+                break;
+            default:
+                throw new EnvelopeException(EnvelopeException.Reason.UnsupportedType, $"Unsupported type {payload.Type}");
+        }
         return payload;
     }
 

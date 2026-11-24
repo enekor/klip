@@ -9,7 +9,9 @@ namespace Klip.Node.Tests;
 internal sealed class MemoryClipboard : IClipboardWriter
 {
     public List<string> Writes { get; } = [];
+    public List<(byte[] Data, string Mime)> Images { get; } = [];
     public void WriteText(string text) { lock (Writes) Writes.Add(text); }
+    public void WriteImage(byte[] data, string mimeType) { lock (Images) Images.Add((data, mimeType)); }
 }
 
 /// <summary>Two real nodes talking over HTTP on localhost.</summary>
@@ -96,6 +98,27 @@ public sealed class SyncNodeTests : IAsyncLifetime
         Assert.True((await _a.SendClipboardAsync("línea 1\nlínea 2")).AnyOk);
         Assert.False(_b.LastReceived.IsTest);
         Assert.Equal("línea 1 ⏎ línea 2", _b.LastReceived.Preview());
+    }
+
+    [Fact]
+    public async Task ImagesAreDeliveredAndDoNotBounce()
+    {
+        var png = new byte[300_000];
+        Random.Shared.NextBytes(png);
+        var outcome = await _a.SendImageAsync(png, "image/png");
+        Assert.True(outcome.AnyOk);
+        var (data, mime) = Assert.Single(_clipB.Images);
+        Assert.Equal(png, data);
+        Assert.Equal("image/png", mime);
+        Assert.Empty(_clipB.Writes);
+
+        Assert.True(_b.LastReceived!.IsImage);
+        Assert.Equal("[Imagen PNG, 292 KB]", _b.LastReceived.Preview());
+        // B now "has" the image on its clipboard: its monitor must not send it back.
+        Assert.Equal(OutgoingDecision.SkipJustReceived, (await _b.SendImageAsync(png, "image/png")).Decision);
+        Assert.Equal(OutgoingDecision.SkipAlreadySent, (await _a.SendImageAsync(png, "image/png")).Decision);
+        Assert.Equal(OutgoingDecision.SkipBlank, (await _a.SendImageAsync([], "image/png")).Decision);
+        await Assert.ThrowsAsync<ArgumentException>(() => _a.SendImageAsync(png, "image/gif"));
     }
 
     [Fact]

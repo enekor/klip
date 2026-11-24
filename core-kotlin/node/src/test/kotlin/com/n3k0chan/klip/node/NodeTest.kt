@@ -25,8 +25,13 @@ import kotlin.test.fail
 
 class MemoryClipboard : ClipboardWriter {
     val writes: MutableList<String> = Collections.synchronizedList(mutableListOf())
+    val images: MutableList<Pair<ByteArray, String>> = Collections.synchronizedList(mutableListOf())
     override fun writeText(text: String) {
         writes += text
+    }
+
+    override fun writeImage(data: ByteArray, mimeType: String) {
+        images += data to mimeType
     }
 }
 
@@ -104,6 +109,21 @@ class NodeTest {
         assertEquals("A", last.from)
         assertTrue(last.content.startsWith("Prueba de conexión desde A - "))
         assertEquals(clips[b]!!.writes.last(), last.content)
+    }
+
+    @Test
+    fun imagesAreDeliveredAndDoNotBounce() = runBlocking {
+        val a = newNode("A")
+        val b = newNode("B")
+        assertTrue(pair(a, b).ok)
+        val jpeg = ByteArray(300_000).also { java.util.Random(1).nextBytes(it) }
+        assertTrue(a.sendImage(jpeg, "image/jpeg").anyOk)
+        val (data, mime) = clips[b]!!.images.single()
+        assertTrue(jpeg.contentEquals(data))
+        assertEquals("image/jpeg", mime)
+        assertEquals("[Imagen JPEG, 292 KB]", b.lastReceived.value?.preview())
+        assertEquals(OutgoingDecision.SKIP_JUST_RECEIVED, b.sendImage(jpeg, "image/jpeg").decision)
+        assertEquals(OutgoingDecision.SKIP_ALREADY_SENT, a.sendImage(jpeg, "image/jpeg").decision)
     }
 
     @Test

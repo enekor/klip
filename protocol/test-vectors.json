@@ -263,5 +263,63 @@
     "secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
     "aad": "/group/introduce\ndevice-introducer\ndevice-member\n1763930012345",
     "ciphertext": "v638PI4SqQEUjZvs8AU9vLdZgq0LP9dmJZyeESg87dbTyGr5r3NVN9abKiKab2GZ"
+  },
+  "imageEnvelope": {
+    "encKey": "edcd83c83ca9ca57040ed29483a712a2404bdeda573574e7112e5b8efd22812e",
+    "image": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAF/gL+p9ajxAAAAABJRU5ErkJggg==",
+    "valid": {
+      "envelope": {
+        "protocolVersion": 1,
+        "messageId": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f00112233",
+        "originDeviceId": "device-windows-pc",
+        "timestamp": 1763930000000,
+        "iv": "KCkqKywtLi8wMTIz",
+        "ciphertext": "Rb6P0mN8+aWFmdlI8CqrsuaC8S+Kt2d5vTntz7qenTuSlPtjWfF49eUE7HB2XvJDdlUNMlZnHfVSi4PvNRIjzoetRGLsWKyiZE21fFrZMKyaket4Zpon03hlPLwEOPuyUFZtPwGhu9Nr+nVmXEqffl6MZFPnYkRQXNrh/XIgOt2e3bbvTYiZ7eV0ME6R0063r8FrfoWrGtt92fmGN+u26lz8ih0imh9fOgtEW3LL0haTCoXGwmDmq2mYQR2XQ7mBhTYhhyG35f0zPhjVFyOYl7ze94s0+XOEtYtjnDEjTQDV9ASTG79ijB3PpMjMCbHS+xrE7MEq7AvdVMOQErD3SP4N964iLd8XKPgnbroOiwVVc9hYK9LjH2DHuOiohudKdvIbwzTM"
+      },
+      "payload": {
+        "type": "image",
+        "content": "",
+        "contentHash": "691372a8b76df7b0302389e806df9fb6961d4e0896d70a7f0fc2e4d753b48fce",
+        "originDeviceName": "PC",
+        "isTest": false,
+        "mimeType": "image/png",
+        "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAF/gL+p9ajxAAAAABJRU5ErkJggg=="
+      }
+    },
+    "mustReject": [
+      {
+        "reason": "contentHash does not match image",
+        "envelope": {
+          "protocolVersion": 1,
+          "messageId": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f00112233",
+          "originDeviceId": "device-windows-pc",
+          "timestamp": 1763930000000,
+          "iv": "NDU2Nzg5Ojs8PT4/",
+          "ciphertext": "jvRvw0OneOSylR3mBdMdda0aWwMq7rsBy47Id0W+9G3nG/nZ9Uv7+NGATmzrg+bbW1ZKU/arLHYUV3esNu0C1HyNUkx64Ez3ZPfjhDcoKwZV4CuHSAKEerUOjAYXT5PNm9Z5OnbDm1fHtndYTflOZnoA0u4UhpcdJqH2Cateq/A2GGnmNTvm54LABPnMR2US7shwmKweveu5QEY0/sEKRuvmdzn/mG5LBKP3ktVKdoUamAheuZ1ntK1Q8McZATaVHDqAhh9+opwfKwzepLhTRBIhWdUcpDm21H1To/yhucQ65SV2ibKIES+RyCQqZUHUjd/1D9xyKdAkx2UloMfq4sK1uCP5iKQ7zARtiJ6F2GDsGYAUhuGUnPKdJdpLCDtxlD1pnhLS"
+        }
+      },
+      {
+        "reason": "unsupported image mimeType",
+        "envelope": {
+          "protocolVersion": 1,
+          "messageId": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f00112233",
+          "originDeviceId": "device-windows-pc",
+          "timestamp": 1763930000000,
+          "iv": "QEFCQ0RFRkdISUpL",
+          "ciphertext": "WmUtC84lgT7D1gwCU7RzKuLBXd3yqSRCRtLzakKY6HXM1MkaiCqiuwxNMX/ZHudOg6woWvCiRB2OelGQYdMwfKwakePj94FxDVjuz+YOyY3PYH0Yw303n0kr8VCGwcmBSYqcITESHZWbjKnhbscnB8OkRLCAWHzRXg6yb8abHVZc+BBC/O4AzoCtB/rNcAIevEYfmPtC4hxu3tEqsOjqciY0MEEcaXqwuT2IZ/PoSZzoEKuEtlRm5X+ewuP26+7O6CfAB/kqoNONbjXW1O1FAjO7ZIB+y43ObfzgFANik4pevbj5UateCsrv66Nb32gXk73gv2GxUhTqnDWB7Cu3MxD6PDq8upD7qP4xjY5fW1pJds+SYX+iHuLPyGpTsKEuV0G89Kq9"
+        }
+      },
+      {
+        "reason": "empty image data",
+        "envelope": {
+          "protocolVersion": 1,
+          "messageId": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f00112233",
+          "originDeviceId": "device-windows-pc",
+          "timestamp": 1763930000000,
+          "iv": "TE1OT1BRUlNUVVZX",
+          "ciphertext": "QwB3NuGDaIs2nXUWLV0VCbJ4jDBHboPgih49rmZWM53dJgEI1/w59AWx8L6JrHq6pW75j0mbtUFnuruCxJ4fvhUwOwtkOft1PYvN99BByvxNTyz9GB2DcNsmmXGf13Ggq3KiWnRc7pwtfyaTfQwncodsiwRzw4CCekouGqr0pzu53mWMWqhj/9LsDDcfZczwl1Gd6ak8Yhw59f6xnC3exODa7K2waGQAdm8lh+cP0Gf2Kl4JHohdiznVitLa6eI9S8T1w7Vw"
+        }
+      }
+    ]
   }
 }

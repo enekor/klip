@@ -21,16 +21,30 @@ data class Envelope(
 @Serializable
 data class ClipboardPayload(
     val type: String = TYPE_TEXT,
+    /** The text; empty for images. */
     val content: String,
     val contentHash: String,
     val originDeviceName: String,
     val isTest: Boolean = false,
+    /** Images only: "image/png" or "image/jpeg". */
+    val mimeType: String? = null,
+    /** Images only: the bytes, Base64. */
+    val data: String? = null,
 ) {
+    val isImage get() = type == TYPE_IMAGE
+
+    /** Decoded image bytes (images only). */
+    fun imageBytes(): ByteArray = (data ?: "").base64ToBytes()
+
     companion object {
         const val TYPE_TEXT = "text"
+        const val TYPE_IMAGE = "image"
 
         fun text(content: String, originDeviceName: String, isTest: Boolean = false) =
             ClipboardPayload(TYPE_TEXT, content, Content.hash(content), originDeviceName, isTest)
+
+        fun image(bytes: ByteArray, mimeType: String, originDeviceName: String) =
+            ClipboardPayload(TYPE_IMAGE, "", Content.hashBytes(bytes), originDeviceName, false, mimeType, bytes.toBase64())
     }
 }
 
@@ -88,11 +102,24 @@ object EnvelopeCodec {
         } catch (e: IllegalArgumentException) {
             throw EnvelopeException(EnvelopeException.Reason.MALFORMED, "Invalid payload JSON", e)
         }
-        if (payload.type != ClipboardPayload.TYPE_TEXT) {
-            throw EnvelopeException(EnvelopeException.Reason.UNSUPPORTED_TYPE, "Unsupported type ${payload.type}")
-        }
-        if (payload.contentHash != Content.hash(payload.content)) {
-            throw EnvelopeException(EnvelopeException.Reason.HASH_MISMATCH, "contentHash does not match content")
+        when (payload.type) {
+            ClipboardPayload.TYPE_TEXT -> if (payload.contentHash != Content.hash(payload.content)) {
+                throw EnvelopeException(EnvelopeException.Reason.HASH_MISMATCH, "contentHash does not match content")
+            }
+            ClipboardPayload.TYPE_IMAGE -> {
+                if (payload.mimeType !in Content.IMAGE_MIME_TYPES) {
+                    throw EnvelopeException(EnvelopeException.Reason.UNSUPPORTED_TYPE, "Unsupported image type ${payload.mimeType}")
+                }
+                val bytes = try {
+                    payload.imageBytes()
+                } catch (e: IllegalArgumentException) {
+                    throw EnvelopeException(EnvelopeException.Reason.MALFORMED, "Invalid image data", e)
+                }
+                if (bytes.isEmpty() || payload.contentHash != Content.hashBytes(bytes)) {
+                    throw EnvelopeException(EnvelopeException.Reason.HASH_MISMATCH, "contentHash does not match image")
+                }
+            }
+            else -> throw EnvelopeException(EnvelopeException.Reason.UNSUPPORTED_TYPE, "Unsupported type ${payload.type}")
         }
         return payload
     }

@@ -96,6 +96,19 @@ try
             return outcome.Decision == OutgoingDecision.Send && !outcome.AnyOk ? 1 : 0;
         }
 
+        case "send-image":
+        {
+            await using var node = OpenNode();
+            var file = argv.FirstOrDefault() ?? throw new ArgumentException("Falta el archivo de imagen");
+            var bytes = await File.ReadAllBytesAsync(file);
+            var mime = file.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) || file.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)
+                ? "image/jpeg" : "image/png";
+            var outcome = await node.SendImageAsync(bytes, mime);
+            Console.WriteLine($"Decisión: {outcome.Decision}");
+            foreach (var r in outcome.Results) Console.WriteLine($"  {r.Name}: {(r.Ok ? $"OK ({r.HttpStatus})" : r.Error)}");
+            return outcome.Decision == OutgoingDecision.Send && !outcome.AnyOk ? 1 : 0;
+        }
+
         case "ping":
         {
             await using var node = OpenNode();
@@ -233,6 +246,7 @@ static void PrintHelp() => Console.WriteLine("""
       peers                               Lista los dispositivos vinculados
       ping                                Comprueba la conexión con cada dispositivo
       send [--test] [texto]               Envía un texto (o stdin) / una prueba
+      send-image <archivo.png|.jpg>       Envía una imagen
       pair --host H [--port P] [--yes]    Se vincula por PIN con otro dispositivo (que debe tener Klip abierto)
       listen [--accept-pairing] [--radar] Recibe copias y solicitudes de vinculación; cada línea escrita se envía
                                           ('aceptar' / 'rechazar' responde a una solicitud pendiente)
@@ -245,6 +259,14 @@ static void PrintHelp() => Console.WriteLine("""
 
 internal sealed class ConsoleClipboard : IClipboardWriter
 {
+    /// <summary>Received images are saved next to the config as received-&lt;time&gt;.png/.jpg.</summary>
+    public void WriteImage(byte[] data, string mimeType)
+    {
+        var file = $"received-{DateTime.Now:HHmmss-fff}.{(mimeType == "image/jpeg" ? "jpg" : "png")}";
+        File.WriteAllBytes(file, data);
+        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Portapapeles <- imagen {mimeType}, {data.Length} bytes, guardada en {file}");
+    }
+
     public void WriteText(string text)
     {
         Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Portapapeles <- ({text.Length} caracteres)");

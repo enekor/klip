@@ -138,6 +138,27 @@ public class TestVectorsTests
     }
 
     [Fact]
+    public void ImageEnvelope()
+    {
+        var env = V.GetProperty("imageEnvelope");
+        var key = Hex(env, "encKey");
+        var payload = EnvelopeCodec.Open(key, EnvelopeCodec.Decode(env.GetProperty("valid").GetProperty("envelope").GetRawText()));
+        Assert.True(payload.IsImage);
+        Assert.Equal("image/png", payload.MimeType);
+        Assert.Equal(B64(env, "image"), payload.ImageBytes());
+        foreach (var bad in env.GetProperty("mustReject").EnumerateArray())
+        {
+            var ex = Record.Exception(() => EnvelopeCodec.Open(key, EnvelopeCodec.Decode(bad.GetProperty("envelope").GetRawText())));
+            Assert.True(ex is EnvelopeException, "must reject: " + S(bad, "reason"));
+        }
+
+        // Round trip through our own encoder.
+        var bytes = B64(env, "image");
+        var sealedEnv = EnvelopeCodec.Seal(key, "dev", ClipboardPayload.Image(bytes, "image/png", "PC"));
+        Assert.Equal(bytes, EnvelopeCodec.Open(key, EnvelopeCodec.Decode(EnvelopeCodec.Encode(sealedEnv))).ImageBytes());
+    }
+
+    [Fact]
     public void EnvelopeRoundTrip()
     {
         var keys = PairKeys.Derive(PairKeys.NewRandomSecret());

@@ -8,6 +8,9 @@ namespace Klip.Node;
 public interface IClipboardWriter
 {
     void WriteText(string text);
+
+    /// <summary>Places an image ("image/png" or "image/jpeg") on the clipboard.</summary>
+    void WriteImage(byte[] data, string mimeType);
 }
 
 /// <summary>mDNS/DNS-SD integration (docs/protocol.md §8.7). Optional.</summary>
@@ -26,14 +29,20 @@ public sealed record SendOutcome(OutgoingDecision Decision, IReadOnlyList<PeerSe
 }
 
 /// <summary>Something received from another device.</summary>
-public sealed record ReceivedItem(string From, string Content, bool IsTest, long AtMs)
+public sealed record ReceivedItem(string From, string Content, bool IsTest, long AtMs, byte[]? Image = null, string? MimeType = null)
 {
+    public bool IsImage => Image is not null;
+
     /// <summary>Single-line preview for the UI.</summary>
     public string Preview(int max = 120)
     {
+        if (Image is not null) return $"[Imagen {MimeType?.Replace("image/", "").ToUpperInvariant()}, {FormatSize(Image.Length)}]";
         var oneLine = Content.ReplaceLineEndings(" ⏎ ");
         return oneLine.Length <= max ? oneLine : oneLine[..max] + "…";
     }
+
+    public static string FormatSize(long bytes) =>
+        bytes >= 1024 * 1024 ? $"{bytes / 1024.0 / 1024.0:0.0} MB" : $"{Math.Max(1, bytes / 1024)} KB";
 }
 
 /// <summary>Read-only view of a peer for the UI.</summary>
@@ -300,15 +309,30 @@ public sealed partial class SyncNode : IAsyncDisposable
     // ---------- Outgoing clipboard ----------
 
     /// <summary>Applies the outgoing rules and sends to every enabled peer (or only <paramref name="onlyDeviceId"/>).</summary>
-    public async Task<SendOutcome> SendClipboardAsync(string content, bool isSensitive = false, bool isTest = false, string? onlyDeviceId = null)
+    public Task<SendOutcome> SendClipboardAsync(string content, bool isSensitive = false, bool isTest = false, string? onlyDeviceId = null)
     {
         var decision = _state.EvaluateOutgoing(content, isTest, isSensitive, SyncEnabled);
-        if (decision != OutgoingDecision.Send) return new SendOutcome(decision, []);
+        return decision != OutgoingDecision.Send
+            ? Task.FromResult(new SendOutcome(decision, []))
+            : SendPayloadAsync(ClipboardPayload.Text(content, DeviceName, isTest), decision, onlyDeviceId);
+    }
 
+    /// <summary>Sends an image ("image/png" or "image/jpeg") with the same anti-loop rules as text.</summary>
+    public Task<SendOutcome> SendImageAsync(byte[] image, string mimeType, string? onlyDeviceId = null)
+    {
+        if (!Content.ImageMimeTypes.Contains(mimeType)) throw new ArgumentException($"Formato no soportado: {mimeType}");
+        var decision = _state.EvaluateOutgoingImage(image, SyncEnabled);
+        return decision != OutgoingDecision.Send
+            ? Task.FromResult(new SendOutcome(decision, []))
+            : SendPayloadAsync(ClipboardPayload.Image(image, mimeType, DeviceName), decision, onlyDeviceId);
+    }
+
+    private async Task<SendOutcome> SendPayloadAsync(ClipboardPayload payload, OutgoingDecision decision, string? onlyDeviceId)
+    {
+        var isTest = payload.IsTest;
         var targets = PeersWithKeys(p => onlyDeviceId is null ? p.Enabled : p.DeviceId == onlyDeviceId);
         if (targets.Count == 0) return new SendOutcome(decision, []);
 
-        var payload = ClipboardPayload.Text(content, DeviceName, isTest);
         var messageId = Guid.NewGuid().ToString();
         var results = await Task.WhenAll(targets.Select(t => SendWithResolveAsync(t.Peer, t.Keys, payload, messageId)));
 
@@ -321,7 +345,7 @@ public sealed partial class SyncNode : IAsyncDisposable
             _state.MarkSent(payload.ContentHash);
             lock (_lock) Persist();
         }
-        Log($"Envío {(isTest ? "de prueba " : "")}a {results.Count(r => r.Ok)}/{results.Length} dispositivos");
+        Log($"Envío {(isTest ? "de prueba " : payload.IsImage ? "de imagen " : "")}a {results.Count(r => r.Ok)}/{results.Length} dispositivos");
         PeersChanged?.Invoke();
         return new SendOutcome(decision, results);
     }
@@ -383,7 +407,8 @@ public sealed partial class SyncNode : IAsyncDisposable
         MarkSeen(deviceId, remoteIp, notify: false);
         try
         {
-            _clipboard.WriteText(payload.Content);
+            if (payload.IsImage) _clipboard.WriteImage(payload.ImageBytes(), payload.MimeType!);
+            else _clipboard.WriteText(payload.Content);
         }
         catch (Exception e)
         {
@@ -391,12 +416,16 @@ public sealed partial class SyncNode : IAsyncDisposable
         }
         lock (_lock) Persist();
 
-        Log($"Recibido de {payload.OriginDeviceName}{(payload.IsTest ? " (prueba)" : "")}: {payload.Content.Length} caracteres");
-        var item = new ReceivedItem(payload.OriginDeviceName, payload.Content, payload.IsTest, Now);
+        Log(payload.IsImage
+            ? $"Recibida imagen de {payload.OriginDeviceName}: {ReceivedItem.FormatSize(payload.ImageBytes().Length)}"
+            : $"Recibido de {payload.OriginDeviceName}{(payload.IsTest ? " (prueba)" : "")}: {payload.Content.Length} caracteres");
+        var item = payload.IsImage
+            ? new ReceivedItem(payload.OriginDeviceName, "", false, Now, payload.ImageBytes(), payload.MimeType)
+            : new ReceivedItem(payload.OriginDeviceName, payload.Content, payload.IsTest, Now);
         LastReceived = item;
         Received?.Invoke(item);
         if (payload.IsTest) TestReceived?.Invoke(payload.OriginDeviceName);
-        else ContentReceived?.Invoke(payload.OriginDeviceName, payload.Content);
+        else if (!payload.IsImage) ContentReceived?.Invoke(payload.OriginDeviceName, payload.Content);
         PeersChanged?.Invoke();
         return new Reply(200);
     }

@@ -37,15 +37,22 @@ public sealed class SyncState
         _processedIds = new LinkedList<string>((snapshot?.ProcessedMessageIds ?? []).TakeLast(Protocol.ProcessedIdsCapacity));
     }
 
-    public OutgoingDecision EvaluateOutgoing(string content, bool isTest = false, bool isSensitive = false, bool syncEnabled = true)
+    public OutgoingDecision EvaluateOutgoing(string content, bool isTest = false, bool isSensitive = false, bool syncEnabled = true) =>
+        Evaluate(Content.IsBlank(content), () => Content.Hash(content), isTest, isSensitive, syncEnabled);
+
+    /// <summary>Same rules for an image; its hash is the SHA-256 of the bytes.</summary>
+    public OutgoingDecision EvaluateOutgoingImage(byte[] image, bool syncEnabled = true) =>
+        Evaluate(image.Length == 0, () => Content.HashBytes(image), isTest: false, isSensitive: false, syncEnabled);
+
+    private OutgoingDecision Evaluate(bool blank, Func<string> hashOf, bool isTest, bool isSensitive, bool syncEnabled)
     {
         lock (_lock)
         {
             if (!syncEnabled) return OutgoingDecision.SkipDisabled;
             if (isSensitive) return OutgoingDecision.SkipSensitive;
-            if (Content.IsBlank(content)) return OutgoingDecision.SkipBlank;
+            if (blank) return OutgoingDecision.SkipBlank;
             if (isTest) return OutgoingDecision.Send;
-            var hash = Content.Hash(content);
+            var hash = hashOf();
             if (hash == _lastSentHash) return OutgoingDecision.SkipAlreadySent;
             if (hash == _lastReceivedHash) return OutgoingDecision.SkipJustReceived;
             return OutgoingDecision.Send;

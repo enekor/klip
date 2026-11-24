@@ -31,13 +31,20 @@ class SyncState(private val localDeviceId: String, snapshot: SyncSnapshot = Sync
     private var lastReceivedHash: String? = snapshot.lastReceivedHash
     private val processedIds = ArrayDeque(snapshot.processedMessageIds.takeLast(Protocol.PROCESSED_IDS_CAPACITY))
 
+    fun evaluateOutgoing(content: String, isTest: Boolean = false, isSensitive: Boolean = false, syncEnabled: Boolean = true): OutgoingDecision =
+        evaluate(Content.isBlank(content), { Content.hash(content) }, isTest, isSensitive, syncEnabled)
+
+    /** Same rules for an image; its hash is the SHA-256 of the bytes. */
+    fun evaluateOutgoingImage(image: ByteArray, syncEnabled: Boolean = true): OutgoingDecision =
+        evaluate(image.isEmpty(), { Content.hashBytes(image) }, isTest = false, isSensitive = false, syncEnabled = syncEnabled)
+
     @Synchronized
-    fun evaluateOutgoing(content: String, isTest: Boolean = false, isSensitive: Boolean = false, syncEnabled: Boolean = true): OutgoingDecision {
+    private fun evaluate(blank: Boolean, hashOf: () -> String, isTest: Boolean, isSensitive: Boolean, syncEnabled: Boolean): OutgoingDecision {
         if (!syncEnabled) return OutgoingDecision.SKIP_DISABLED
         if (isSensitive) return OutgoingDecision.SKIP_SENSITIVE
-        if (Content.isBlank(content)) return OutgoingDecision.SKIP_BLANK
+        if (blank) return OutgoingDecision.SKIP_BLANK
         if (isTest) return OutgoingDecision.SEND
-        val hash = Content.hash(content)
+        val hash = hashOf()
         if (hash == lastSentHash) return OutgoingDecision.SKIP_ALREADY_SENT
         if (hash == lastReceivedHash) return OutgoingDecision.SKIP_JUST_RECEIVED
         return OutgoingDecision.SEND

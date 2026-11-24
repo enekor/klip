@@ -229,6 +229,51 @@ def envelope_vectors():
     }
 
 
+def image_envelope_vectors():
+    enc_key = bytes.fromhex(random_secret_vector()["encKey"])
+    message_id = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f00112233"
+    origin = "device-windows-pc"
+    # A real 1x1 PNG: the hash covers the exact bytes, the format is not re-encoded.
+    image = bytes.fromhex(
+        "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+        "1f15c4890000000d49444154789c63f8cfc0f01f0005fe02fea7d6a3c40000000049454e44ae426082")
+    aad = f"{message_id}\n{origin}".encode()
+
+    def seal(payload, iv):
+        pt = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
+        return {
+            "protocolVersion": 1,
+            "messageId": message_id,
+            "originDeviceId": origin,
+            "timestamp": 1763930000000,
+            "iv": b64(iv),
+            "ciphertext": b64(AESGCM(enc_key).encrypt(iv, pt, aad)),
+        }
+
+    payload = {
+        "type": "image",
+        "content": "",
+        "contentHash": sha256(image).hex(),
+        "originDeviceName": "PC",
+        "isTest": False,
+        "mimeType": "image/png",
+        "data": b64(image),
+    }
+    return {
+        "encKey": enc_key.hex(),
+        "image": b64(image),
+        "valid": {"envelope": seal(payload, bytes(range(40, 52))), "payload": payload},
+        "mustReject": [
+            {"reason": "contentHash does not match image",
+             "envelope": seal(dict(payload, contentHash="00" * 32), bytes(range(52, 64)))},
+            {"reason": "unsupported image mimeType",
+             "envelope": seal(dict(payload, mimeType="image/gif"), bytes(range(64, 76)))},
+            {"reason": "empty image data",
+             "envelope": seal(dict(payload, data="", contentHash=sha256(b"").hex()), bytes(range(76, 88)))},
+        ],
+    }
+
+
 def introduction_vector():
     enc_key = bytes.fromhex(random_secret_vector()["encKey"])
     introducer, member_id, issued_at = "device-introducer", "device-member", 1763930012345
@@ -258,6 +303,7 @@ def main():
         "aesGcm": aes_gcm_vectors(),
         "envelope": envelope_vectors(),
         "introduction": introduction_vector(),
+        "imageEnvelope": image_envelope_vectors(),
     }
     json.dump(vectors, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")
