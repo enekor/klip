@@ -11,6 +11,7 @@ import android.os.Looper
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Log
+import androidx.core.content.FileProvider
 import androidx.core.content.edit
 import com.n3k0chan.klip.KlipApp
 import com.n3k0chan.klip.node.ClipboardWriter
@@ -61,6 +62,30 @@ class KeystoreProtector : SecretProtector {
  */
 class AndroidClipboardWriter(private val context: Context) : ClipboardWriter {
     private val main = Handler(Looper.getMainLooper())
+
+    /**
+     * Images are saved in the cache and placed on the clipboard as a content:// URI (FileProvider). Only the
+     * latest few are kept; the system grants read access to whichever app pastes.
+     */
+    override fun writeImage(data: ByteArray, mimeType: String) {
+        val dir = java.io.File(context.cacheDir, "clips").apply { mkdirs() }
+        dir.listFiles()?.sortedByDescending { it.lastModified() }?.drop(KEEP_IMAGES - 1)?.forEach { it.delete() }
+        val file = java.io.File(dir, "klip-${System.currentTimeMillis()}.${if (mimeType == "image/jpeg") "jpg" else "png"}")
+        file.writeBytes(data)
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.clips", file)
+        main.post {
+            try {
+                context.getSystemService(ClipboardManager::class.java)
+                    .setPrimaryClip(ClipData.newUri(context.contentResolver, "Klip", uri))
+            } catch (e: RuntimeException) {
+                Log.w(KlipApp.TAG, "Clipboard image write failed", e)
+            }
+        }
+    }
+
+    private companion object {
+        const val KEEP_IMAGES = 5
+    }
 
     override fun writeText(text: String) {
         main.post {

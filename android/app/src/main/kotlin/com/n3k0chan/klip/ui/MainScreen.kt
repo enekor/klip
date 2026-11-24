@@ -1,5 +1,7 @@
 package com.n3k0chan.klip.ui
 
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -41,6 +44,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -216,7 +221,17 @@ private fun LastReceivedCard(item: ReceivedItem?) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Text("«${item.preview(300)}»", style = MaterialTheme.typography.bodyMedium)
+                Text(if (item.isImage) item.preview() else "«${item.preview(300)}»", style = MaterialTheme.typography.bodyMedium)
+                item.image?.let { bytes ->
+                    val thumbnail = remember(bytes) { decodeThumbnail(bytes) }
+                    thumbnail?.let {
+                        Image(
+                            bitmap = it,
+                            contentDescription = "Imagen recibida",
+                            modifier = Modifier.padding(top = 8.dp).heightIn(max = 180.dp),
+                        )
+                    }
+                }
             }
         }
     }
@@ -424,6 +439,15 @@ private fun platformLabel(p: String) = when (p) {
     "linux" -> "Linux"
     "devpeer" -> "DevPeer"
     else -> p
+}
+
+/** Downsampled preview: a received photo can be large. */
+private fun decodeThumbnail(bytes: ByteArray): ImageBitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    var sample = 1
+    while (bounds.outWidth / sample > 1024 || bounds.outHeight / sample > 1024) sample *= 2
+    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
 }
 
 private fun formatTime(ms: Long, pattern: String = "dd/MM HH:mm") = SimpleDateFormat(pattern, Locale.getDefault()).format(Date(ms))
