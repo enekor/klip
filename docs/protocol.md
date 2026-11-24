@@ -1,0 +1,199 @@
+# Especificación del Protocolo Klip — v1
+
+Documento normativo. Las implementaciones de Kotlin (`core-kotlin`) y C# (`core-dotnet`) deben comportarse exactamente como aquí se describe y superar los vectores de prueba de [`protocol/test-vectors.json`](../protocol/test-vectors.json), generados por una tercera implementación de referencia en Python ([`tools/gen_test_vectors.py`](../tools/gen_test_vectors.py)).
+
+Las decisiones de diseño y su justificación están en [`plan.md`](plan.md).
+
+## 1. Convenciones
+
+* **Texto:** siempre UTF-8, sin BOM.
+* **Binario en JSON y cabeceras:** Base64 estándar (RFC 4648 §4) **con** relleno `=`.
+* **Hex:** minúsculas.
+* **Tiempos:** milisegundos desde la época Unix (UTC), como entero de 64 bits.
+* `||` indica concatenación de bytes.
+* `SHA256`, `HMAC` = HMAC-SHA256, `HKDF` = HKDF-SHA256 (RFC 5869).
+
+## 2. Constantes
+
+| Nombre | Valor |
+| :--- | :--- |
+| `PROTOCOL_VERSION` | `1` |
+| `HTTP_PORT` | `8765` (TCP) |
+| `DISCOVERY_PORT` | `8766` (UDP) |
+| `MDNS_SERVICE_TYPE` | `_klip._tcp` |
+| `TIMESTAMP_WINDOW_MS` | `30000` |
+| `NONCE_TTL_MS` | `60000` |
+| `PROCESSED_IDS_CAPACITY` | `50` |
+| `PAIRING_NONCE_BYTES` | `32` |
+| `REQUEST_NONCE_BYTES` | `16` |
+| `AES_GCM_IV_BYTES` | `12` |
+| `AES_GCM_TAG_BYTES` | `16` |
+
+## 3. Normalización de Contenido
+
+```
+normalize(s):
+    s = replace(s, "\r\n", "\n")
+    s = replace(s, "\r",   "\n")
+    s = NFC(s)
+    return s
+
+contentHash(s) = hex(SHA256(UTF8(normalize(s))))
+
+isBlank(s) = s está vacía o todos sus caracteres son espacio en blanco Unicode
+```
+
+* No se recortan espacios para el hash.
+* Al escribir en el portapapeles de Windows, el receptor convierte `\n` en `\r\n`. Como el hash se calcula sobre el texto normalizado, sigue coincidiendo.
+
+## 4. Claves
+
+### 4.1. Pares de Claves de Emparejamiento
+
+* Curva **NIST P-256** (`secp256r1`).
+* Clave pública en formato SEC1 **sin comprimir**: `0x04 || X(32 bytes) || Y(32 bytes)` = 65 bytes.
+* El receptor de una clave pública **debe** comprobar que tiene 65 bytes, empieza por `0x04` y que el punto está en la curva. Si no, rechaza el emparejamiento.
+* Los pares de claves son **efímeros**: uno nuevo por cada intento de emparejamiento.
+
+### 4.2. Secreto de Pareja
+
+Emparejamiento por PIN (I = iniciador, R = receptor):
+
+```
+shared     = ECDH(priv_I, pub_R) = ECDH(priv_R, pub_I)    # coordenada X, 32 bytes
+pairSecret = HKDF(ikm = shared, salt = nonce_I || nonce_R, info = "klip-pair-v1", L = 32)
+```
+
+Presentación en grupo (`/group/introduce`): `pairSecret` = 32 bytes aleatorios generados por el presentador.
+
+### 4.3. Claves de Trabajo
+
+A partir de `pairSecret`, sea cual sea su origen:
+
+```
+ZERO_SALT = 32 bytes a 0x00
+macKey = HKDF(ikm = pairSecret, salt = ZERO_SALT, info = "klip-mac", L = 32)
+encKey = HKDF(ikm = pairSecret, salt = ZERO_SALT, info = "klip-enc", L = 32)
+```
+
+Se persiste solo `pairSecret` (protegido por Keystore / DPAPI); `macKey` y `encKey` se derivan al cargar.
+
+### 4.4. PIN de Verificación
+
+```
+h   = SHA256(pub_I || pub_R || nonce_I || nonce_R)
+n   = entero sin signo big-endian de h[0..3]
+PIN = n mod 1000000, con ceros a la izquierda hasta 6 dígitos
+```
+
+Para mostrarlo se recomienda agruparlo como `482 913`.
+
+## 5. Firma de Peticiones
+
+Todas las peticiones HTTP salvo `POST /pair/request` llevan:
+
+| Cabecera | Contenido |
+| :--- | :--- |
+| `X-Klip-Device` | `deviceId` del emisor |
+| `X-Klip-Timestamp` | tiempo en ms (decimal) |
+| `X-Klip-Nonce` | Base64 de 16 bytes aleatorios |
+| `X-Klip-Signature` | `Base64(HMAC(macKey, UTF8(canonical)))` |
+
+```
+canonical = METHOD + "\n" + PATH + "\n" + TIMESTAMP + "\n" + NONCE + "\n" + hex(SHA256(body))
+```
+
+* `METHOD` en mayúsculas (`POST`, `GET`).
+* `PATH` es la ruta sin esquema, host ni query (`/clipboard`).
+* `TIMESTAMP` y `NONCE`: exactamente las cadenas de las cabeceras.
+* Cuerpo vacío: `hex(SHA256(""))` = `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+
+### 5.1. Verificación (en este orden)
+
+1. Faltan cabeceras o tienen formato inválido -> `MALFORMED` (`400`).
+2. `X-Klip-Device` no es una pareja conocida -> `UNKNOWN_DEVICE` (`403`).
+3. `|now - timestamp| > TIMESTAMP_WINDOW_MS` -> `EXPIRED` (`401`).
+4. La firma no coincide (comparación en tiempo constante) -> `BAD_SIGNATURE` (`401`).
+5. El par `(deviceId, nonce)` ya se vio en los últimos `NONCE_TTL_MS` -> `REPLAY` (`401`).
+6. En otro caso -> `OK`; se registra el nonce.
+
+El nonce solo se registra tras validar la firma, para que un atacante no pueda llenar la caché.
+
+## 6. Sobre de Portapapeles (`POST /clipboard`)
+
+### 6.1. Sobre (cuerpo HTTP, JSON)
+
+```json
+{
+  "protocolVersion": 1,
+  "messageId": "uuid-v4",
+  "originDeviceId": "id-del-emisor",
+  "timestamp": 1763930000000,
+  "iv": "base64(12 bytes)",
+  "ciphertext": "base64(ct || tag)"
+}
+```
+
+### 6.2. Carga Cifrada
+
+```json
+{
+  "type": "text",
+  "content": "Texto o enlace",
+  "contentHash": "hex sha256 del contenido normalizado",
+  "originDeviceName": "Pixel",
+  "isTest": false
+}
+```
+
+```
+plaintext  = UTF8(JSON(carga))
+aad        = UTF8(messageId + "\n" + originDeviceId)
+ciphertext = AES-256-GCM(encKey, iv, aad, plaintext)   # ct || tag de 16 bytes
+```
+
+* `iv`: 12 bytes aleatorios nuevos por mensaje.
+* `content` se envía **tal como se capturó** (sin normalizar); `contentHash` se calcula sobre la versión normalizada.
+* El orden de campos y los espacios del JSON no son significativos: el receptor parsea el JSON descifrado.
+* Campos desconocidos se ignoran (compatibilidad hacia delante).
+
+### 6.3. Apertura
+
+1. `protocolVersion != 1` -> rechazar (`400`).
+2. Descifrar con `encKey` y la `aad` reconstruida; si falla la autenticación GCM -> rechazar (`400`).
+3. Parsear la carga; `type` distinto de `"text"` -> rechazar (`400`).
+4. Recalcular `contentHash(content)`; si no coincide con el recibido -> rechazar (`400`).
+5. Además, `originDeviceId` del sobre debe coincidir con `X-Klip-Device` -> si no, `400`.
+
+## 7. Reglas Antibucle
+
+Estado por dispositivo: `lastSentHash`, `lastReceivedHash`, `processedMessageIds` (cola circular de `PROCESSED_IDS_CAPACITY`).
+
+**Saliente** (evaluar en este orden; la primera regla que aplica decide):
+
+| # | Condición | Resultado |
+| :--- | :--- | :--- |
+| 1 | sincronización desactivada | `SKIP_DISABLED` |
+| 2 | contenido marcado como sensible | `SKIP_SENSITIVE` |
+| 3 | `isBlank(content)` | `SKIP_BLANK` |
+| 4 | no es prueba y `hash == lastSentHash` | `SKIP_ALREADY_SENT` |
+| 5 | no es prueba y `hash == lastReceivedHash` | `SKIP_JUST_RECEIVED` |
+| — | en otro caso | `SEND`; tras enviarlo, `lastSentHash = hash` (no se actualiza para pruebas) |
+
+**Entrante** (tras verificar firma y abrir el sobre):
+
+| # | Condición | Resultado |
+| :--- | :--- | :--- |
+| 1 | `originDeviceId == localDeviceId` | `IGNORE_SELF` (`409`) |
+| 2 | `messageId` en `processedMessageIds` | `IGNORE_DUPLICATE` (`409`) |
+| — | en otro caso | `ACCEPT`: añadir `messageId`, `lastReceivedHash = hash` **antes** de escribir en el portapapeles |
+
+## 8. Resto de Endpoints
+
+Los cuerpos de estos endpoints viajan en claro pero firmados (salvo `/pair/request`); los secretos que transportan van cifrados con AES-GCM como en §6.2 (`aad = UTF8(<ruta> + "\n" + originDeviceId)`).
+
+> Detalle de cuerpos de `/pair/*`, `/group/*`, `/unpair` y `/ping`, y del beacon UDP: se especificarán en la Fase 4.
+
+## 9. Versionado
+
+Un cambio incompatible incrementa `PROTOCOL_VERSION`. Un receptor responde `400` con `{"error": "unsupported_version", "supported": [1]}` a versiones que no conoce.

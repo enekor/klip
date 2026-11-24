@@ -24,3 +24,9 @@ publish/
 # OS
 .DS_Store
 Thumbs.db
+
+# Kotlin 2.x
+.kotlin/
+
+# Test results
+TestResults/
