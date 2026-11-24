@@ -5,11 +5,28 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-// Release signing: keystore + passwords live OUTSIDE the repo (default ~/.klip-signing/keystore.properties,
-// or the path in KLIP_SIGNING). Without it, release builds are left unsigned.
-val signingProps = Properties().apply {
-    val file = File(System.getenv("KLIP_SIGNING") ?: "${System.getProperty("user.home")}/.klip-signing/keystore.properties")
-    if (file.exists()) file.inputStream().use(::load)
+// Release signing: keystore + passwords live OUTSIDE the repo. First existing file wins:
+//   $KLIP_SIGNING, ~/credenciales/Android/keystore.properties (personal credentials repo).
+// Without one, release builds are left unsigned.
+val signingFile: File? = listOfNotNull(
+    System.getenv("KLIP_SIGNING"),
+    "${System.getProperty("user.home")}/credenciales/Android/keystore.properties",
+).map(::File).firstOrNull { it.exists() }
+
+val signingProps = Properties().apply { signingFile?.inputStream()?.use(::load) }
+
+/**
+ * storeFile may be a path from another machine (e.g. a Windows path): if it does not exist here, look for a file
+ * with the same name next to the properties file or in its parent folder.
+ */
+fun resolveStoreFile(path: String): File {
+    val direct = File(path)
+    if (direct.exists()) return direct
+    val name = path.substringAfterLast('\\').substringAfterLast('/')
+    return listOfNotNull(signingFile?.parentFile, signingFile?.parentFile?.parentFile)
+        .map { File(it, name) }
+        .firstOrNull { it.exists() }
+        ?: error("Keystore '$path' not found (also looked for '$name' next to $signingFile)")
 }
 
 android {
@@ -30,7 +47,7 @@ android {
     signingConfigs {
         if (signingProps.isNotEmpty()) {
             create("release") {
-                storeFile = File(signingProps.getProperty("storeFile"))
+                storeFile = resolveStoreFile(signingProps.getProperty("storeFile"))
                 storePassword = signingProps.getProperty("storePassword")
                 keyAlias = signingProps.getProperty("keyAlias")
                 keyPassword = signingProps.getProperty("keyPassword")
