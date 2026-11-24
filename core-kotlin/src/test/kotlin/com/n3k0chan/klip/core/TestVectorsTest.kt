@@ -119,6 +119,27 @@ class TestVectorsTest {
     }
 
     @Test
+    fun introductionSecret() {
+        val e = v["introduction"]!!.jsonObject
+        val key = e.str("encKey").hexToBytes()
+        val introducer = e.str("introducerId")
+        val issuedAt = e["issuedAt"]!!.jsonPrimitive.content.toLong()
+        val member = MemberInfo(e.str("memberId"), "M", "android", 8765, "10.0.0.2")
+        assertEquals(e.str("aad"), Introductions.aad(introducer, member.deviceId, issuedAt).toString(Charsets.UTF_8))
+        val sealed = Introductions.seal(key, introducer, member, issuedAt, e.str("secret").hexToBytes(), e.str("iv").base64ToBytes())
+        assertEquals(e.str("ciphertext"), sealed.ciphertext)
+        assertEquals(e.str("secret"), Introductions.open(key, introducer, sealed).toHex())
+        assertFailsWith<CryptoException> { Introductions.open(key, "someone-else", sealed) }
+    }
+
+    @Test
+    fun secretVersionOrdering() {
+        assertTrue(SecretVersion(2, "a") > SecretVersion(1, "z"))
+        assertTrue(SecretVersion(1, "b") > SecretVersion(1, "a"))
+        assertTrue(SecretVersion(1, "Z") < SecretVersion(1, "a"), "ordinal, not case-insensitive")
+    }
+
+    @Test
     fun envelopeRoundTrip() {
         val keys = PairKeys.derive(PairKeys.newRandomSecret())
         val sealed = EnvelopeCodec.seal(keys.encKey, "dev-a", ClipboardPayload.text("hola\r\nmundo", "PC", isTest = true))

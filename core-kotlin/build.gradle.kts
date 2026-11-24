@@ -1,18 +1,20 @@
 plugins {
-    kotlin("jvm") version "2.2.20"
-    kotlin("plugin.serialization") version "2.2.20"
+    kotlin("jvm") version "2.4.21"
+    kotlin("plugin.serialization") version "2.4.21"
 }
 
-group = "com.n3k0chan.klip"
-version = "0.1.0"
+allprojects {
+    group = "com.n3k0chan.klip"
+    version = "0.3.0"
+}
 
 kotlin {
-    // Java 17 bytecode so the Android app (minSdk 29, desugared) can consume this module.
+    // Java 17 bytecode so the Android app (minSdk 29) can consume this module.
     jvmToolchain(17)
 }
 
 dependencies {
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
+    api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.13.0")
 
     testImplementation(kotlin("test"))
 }
