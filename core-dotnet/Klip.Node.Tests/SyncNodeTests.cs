@@ -80,9 +80,22 @@ public sealed class SyncNodeTests : IAsyncLifetime
     {
         var received = new List<string>();
         _b.TestReceived += received.Add;
+        var items = new List<ReceivedItem>();
+        _b.Received += items.Add;
         Assert.True((await _a.SendTestAsync()).AnyOk);
         Assert.True((await _a.SendTestAsync()).AnyOk);
         Assert.Equal(["A", "A"], received);
+
+        // The UI can show exactly what arrived.
+        Assert.Equal(2, items.Count);
+        Assert.True(_b.LastReceived!.IsTest);
+        Assert.Equal("A", _b.LastReceived.From);
+        Assert.StartsWith("Prueba de conexión desde A - ", _b.LastReceived.Content);
+        Assert.Equal(_clipB.Writes.Last(), _b.LastReceived.Content);
+
+        Assert.True((await _a.SendClipboardAsync("línea 1\nlínea 2")).AnyOk);
+        Assert.False(_b.LastReceived.IsTest);
+        Assert.Equal("línea 1 ⏎ línea 2", _b.LastReceived.Preview());
     }
 
     [Fact]

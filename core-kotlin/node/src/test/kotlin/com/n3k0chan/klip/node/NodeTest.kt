@@ -94,6 +94,16 @@ class NodeTest {
         val ping = a.ping(b.deviceId)
         assertTrue(ping.ok, ping.error)
         assertEquals("B", ping.info?.deviceName)
+
+        // The UI can show exactly what arrived.
+        assertEquals("hola\nmundo", b.lastReceived.value?.content)
+        assertEquals("hola ⏎ mundo", b.lastReceived.value?.preview())
+        assertTrue(a.sendTest().anyOk)
+        val last = b.lastReceived.value!!
+        assertTrue(last.isTest)
+        assertEquals("A", last.from)
+        assertTrue(last.content.startsWith("Prueba de conexión desde A - "))
+        assertEquals(clips[b]!!.writes.last(), last.content)
     }
 
     @Test

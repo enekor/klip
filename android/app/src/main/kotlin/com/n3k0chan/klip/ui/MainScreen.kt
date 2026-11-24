@@ -55,6 +55,7 @@ import com.n3k0chan.klip.core.Protocol
 import com.n3k0chan.klip.klip
 import com.n3k0chan.klip.node.DiscoveredDevice
 import com.n3k0chan.klip.node.PeerView
+import com.n3k0chan.klip.node.ReceivedItem
 import com.n3k0chan.klip.platform.Components
 import com.n3k0chan.klip.platform.NetworkInfo
 import com.n3k0chan.klip.service.ReceiverService
@@ -77,6 +78,7 @@ fun MainScreen(
     val peers by node.peers.collectAsState()
     val discovered by node.discovered.collectAsState()
     val serverRunning by node.serverRunning.collectAsState()
+    val lastReceived by node.lastReceived.collectAsState()
     val dialog by vm.dialog.collectAsState()
     val message by vm.message.collectAsState()
     val snackbar = remember { SnackbarHostState() }
@@ -102,6 +104,7 @@ fun MainScreen(
                 val ips = remember(refreshTick, serverRunning) { NetworkInfo.localIPv4(context) }
                 IdentityCard(node.deviceName, ips, node.httpPort, serverRunning, onRename = { node.deviceName = it })
             }
+            item { LastReceivedCard(lastReceived) }
             item {
                 val showNotif = remember(refreshTick) { needsNotificationPermission() }
                 val showBattery = remember(refreshTick) { batteryOptimized() }
@@ -196,6 +199,26 @@ private fun IdentityCard(name: String, ips: List<String>, port: Int, serverRunni
             },
             dismissButton = { TextButton(onClick = { editing = false }) { Text("Cancelar") } },
         )
+    }
+}
+
+/** What arrived last (test or real), so the user can check at a glance that sync works. */
+@Composable
+private fun LastReceivedCard(item: ReceivedItem?) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Última recepción", style = MaterialTheme.typography.titleSmall)
+            if (item == null) {
+                Hint("Nada todavía. Pulsa «Enviar prueba» en otro dispositivo.")
+            } else {
+                Text(
+                    "${formatTime(item.atMs, "HH:mm:ss")} · de ${item.from}${if (item.isTest) " · prueba" else ""}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text("«${item.preview(300)}»", style = MaterialTheme.typography.bodyMedium)
+            }
+        }
     }
 }
 
@@ -402,4 +425,4 @@ private fun platformLabel(p: String) = when (p) {
     else -> p
 }
 
-private fun formatTime(ms: Long) = SimpleDateFormat("dd/MM HH:mm", Locale.getDefault()).format(Date(ms))
+private fun formatTime(ms: Long, pattern: String = "dd/MM HH:mm") = SimpleDateFormat(pattern, Locale.getDefault()).format(Date(ms))

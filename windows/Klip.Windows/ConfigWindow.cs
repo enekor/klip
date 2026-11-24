@@ -13,6 +13,7 @@ internal sealed class ConfigWindow : Form
     private readonly TextBox _name = new() { Width = 260 };
     private readonly Label _address = new() { AutoSize = true };
     private readonly Label _status = new() { AutoSize = true };
+    private readonly Label _lastReceived = new() { AutoSize = true, MaximumSize = new Size(620, 0) };
     private readonly Label _activity = new() { AutoSize = true, ForeColor = Color.DimGray, Padding = new Padding(8, 4, 8, 4) };
     private readonly ListView _discovered = NewList(checkBoxes: false);
     private readonly ListView _peers = NewList(checkBoxes: true);
@@ -41,6 +42,9 @@ internal sealed class ConfigWindow : Form
         identity.Controls.Add(_address, 1, 1);
         identity.Controls.Add(new Label { Text = "Estado:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 2);
         identity.Controls.Add(_status, 1, 2);
+        identity.Controls.Add(new Label { Text = "Última recepción:", AutoSize = true, Anchor = AnchorStyles.Left | AnchorStyles.Top }, 0, 3);
+        identity.Controls.Add(_lastReceived, 1, 3);
+        identity.SetColumnSpan(_lastReceived, 2);
 
         // ---- Radar ----
         _discovered.Columns.Add("Nombre", 200);
@@ -83,6 +87,7 @@ internal sealed class ConfigWindow : Form
         Controls.Add(identity);
 
         _node.PeersChanged += OnNodeChanged;
+        _node.Received += OnReceived;
         _node.DiscoveredChanged += OnNodeChanged;
         Shown += (_, _) =>
         {
@@ -95,6 +100,7 @@ internal sealed class ConfigWindow : Form
             _node.PairingOpen = false;
             _node.StopDiscovery();
             _node.PeersChanged -= OnNodeChanged;
+            _node.Received -= OnReceived;
             _node.DiscoveredChanged -= OnNodeChanged;
         };
         RefreshAll();
@@ -130,6 +136,8 @@ internal sealed class ConfigWindow : Form
         return g;
     }
 
+    private void OnReceived(ReceivedItem _) => OnNodeChanged();
+
     private void OnNodeChanged()
     {
         if (IsHandleCreated && !IsDisposed) BeginInvoke(RefreshAll);
@@ -144,6 +152,10 @@ internal sealed class ConfigWindow : Form
         var on = _node.SyncEnabled && _node.IsServerRunning;
         _status.Text = on ? "Sincronización activada" : "Sincronización pausada (actívala en el icono de la bandeja para vincular)";
         _status.ForeColor = on ? Color.DarkGreen : Color.DimGray;
+        _lastReceived.Text = _node.LastReceived is { } r
+            ? $"{DateTimeOffset.FromUnixTimeMilliseconds(r.AtMs).LocalDateTime:HH:mm:ss} · de {r.From}{(r.IsTest ? " · prueba" : "")}" +
+              $"{Environment.NewLine}«{r.Preview(200)}»"
+            : "nada todavía";
 
         var selectedDiscovered = SelectedTag(_discovered);
         _discovered.BeginUpdate();

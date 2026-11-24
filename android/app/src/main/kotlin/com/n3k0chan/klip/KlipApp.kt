@@ -44,7 +44,7 @@ class KlipApp : Application() {
         appScope.launch {
             node.events.collect { event ->
                 when (event) {
-                    is NodeEvent.TestReceived -> Notifications.testReceived(this@KlipApp, event.from)
+                    is NodeEvent.TestReceived -> Notifications.testReceived(this@KlipApp, event.from, event.content)
                     is NodeEvent.Log -> Log.i(TAG, event.message)
                     else -> Unit
                 }

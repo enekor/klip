@@ -40,8 +40,8 @@ android {
         minSdk = 29
         // 36 on purpose: Android 17 (API 37) adds a local-network permission for apps that target it.
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
     }
 
     signingConfigs {

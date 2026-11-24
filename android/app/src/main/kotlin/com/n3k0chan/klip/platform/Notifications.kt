@@ -44,8 +44,9 @@ object Notifications {
             .apply { if (Build.VERSION.SDK_INT >= 31) setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE) }
             .build()
 
-    fun testReceived(context: Context, from: String) =
-        notify(context, ID_TEST, "Prueba recibida", "Prueba recibida correctamente desde $from")
+    /** Shows the received test text itself, so the user sees exactly what arrived. */
+    fun testReceived(context: Context, from: String, content: String) =
+        notify(context, ID_TEST, "Prueba recibida de $from", content)
 
     fun tooLarge(context: Context, chars: Int) =
         notify(context, ID_TOO_LARGE, "Texto demasiado grande", "Llegó un texto de $chars caracteres que no cabe en el portapapeles de Android")

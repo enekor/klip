@@ -34,7 +34,11 @@ internal sealed class TrayApp : ApplicationContext
             Resolver = new WindowsDnsSd(FileLog.Write, LanAddress.PreferredIPv4),
         };
         _node.LogMessage += FileLog.Write;
-        _node.TestReceived += from => _ui.Post(_ => Balloon("Prueba recibida", $"Prueba recibida correctamente desde {from}"), null);
+        // Show the received test text itself, so the user sees exactly what arrived.
+        _node.Received += item =>
+        {
+            if (item.IsTest) _ui.Post(_ => Balloon($"Prueba recibida de {item.From}", item.Preview(200)), null);
+        };
         _node.PairingRequested += p => _ui.Post(_ => ShowIncomingPairing(p), null);
         _node.IncomingPairingFinished += (sessionId, status, name) => _ui.Post(_ => OnIncomingPairingFinished(sessionId, status, name), null);
 

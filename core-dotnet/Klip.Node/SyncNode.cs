@@ -25,6 +25,17 @@ public sealed record SendOutcome(OutgoingDecision Decision, IReadOnlyList<PeerSe
     public bool AnyOk => Results.Any(r => r.Ok);
 }
 
+/// <summary>Something received from another device.</summary>
+public sealed record ReceivedItem(string From, string Content, bool IsTest, long AtMs)
+{
+    /// <summary>Single-line preview for the UI.</summary>
+    public string Preview(int max = 120)
+    {
+        var oneLine = Content.ReplaceLineEndings(" ⏎ ");
+        return oneLine.Length <= max ? oneLine : oneLine[..max] + "…";
+    }
+}
+
 /// <summary>Read-only view of a peer for the UI.</summary>
 public sealed record PeerView(string DeviceId, string Name, string Platform, string Host, int Port, bool Enabled, long? LastSeenMs, string? LastStatus);
 
@@ -62,6 +73,12 @@ public sealed partial class SyncNode : IAsyncDisposable
 
     /// <summary>Real content was written to the clipboard (arguments: sender name, content).</summary>
     public event Action<string, string>? ContentReceived;
+
+    /// <summary>Anything (test or real) was received and written to the clipboard.</summary>
+    public event Action<ReceivedItem>? Received;
+
+    /// <summary>Last thing received, shown in the UI so the user can see what arrived.</summary>
+    public ReceivedItem? LastReceived { get; private set; }
 
     public event Action? PeersChanged;
     public event Action<string>? LogMessage;
@@ -369,6 +386,9 @@ public sealed partial class SyncNode : IAsyncDisposable
         lock (_lock) Persist();
 
         Log($"Recibido de {payload.OriginDeviceName}{(payload.IsTest ? " (prueba)" : "")}: {payload.Content.Length} caracteres");
+        var item = new ReceivedItem(payload.OriginDeviceName, payload.Content, payload.IsTest, Now);
+        LastReceived = item;
+        Received?.Invoke(item);
         if (payload.IsTest) TestReceived?.Invoke(payload.OriginDeviceName);
         else ContentReceived?.Invoke(payload.OriginDeviceName, payload.Content);
         PeersChanged?.Invoke();

@@ -44,7 +44,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             PairingStatus.FAILED -> "La vinculación con ${e.deviceName} falló"
                         }
                     }
-                    is NodeEvent.TestReceived -> _message.value = "Prueba recibida correctamente desde ${e.from}"
+                    is NodeEvent.TestReceived -> _message.value = "Prueba recibida de ${e.from}: «${e.content}»"
                     else -> Unit
                 }
             }

@@ -73,8 +73,17 @@ internal data class Reply(val status: Int, val body: Any? = null) {
     }
 }
 
+/** Something received from another device. */
+data class ReceivedItem(val from: String, val content: String, val isTest: Boolean, val atMs: Long) {
+    /** Single-line preview for the UI. */
+    fun preview(max: Int = 120): String {
+        val oneLine = content.replace("\r\n", "\n").replace('\r', '\n').replace("\n", " ⏎ ")
+        return if (oneLine.length <= max) oneLine else oneLine.take(max) + "…"
+    }
+}
+
 sealed interface NodeEvent {
-    data class TestReceived(val from: String) : NodeEvent
+    data class TestReceived(val from: String, val content: String) : NodeEvent
     data class ContentReceived(val from: String, val content: String) : NodeEvent
     data class PairingRequested(val pairing: IncomingPairing) : NodeEvent
     data class IncomingPairingFinished(val sessionId: String, val status: PairingStatus, val deviceName: String) : NodeEvent
@@ -122,6 +131,10 @@ class SyncNode(
 
     private val _serverRunning = MutableStateFlow(false)
     val serverRunning: StateFlow<Boolean> = _serverRunning.asStateFlow()
+
+    /** Last thing received (test or real), shown in the UI so the user can see what arrived. */
+    private val _lastReceived = MutableStateFlow<ReceivedItem?>(null)
+    val lastReceived: StateFlow<ReceivedItem?> = _lastReceived.asStateFlow()
 
     val discovered: StateFlow<List<DiscoveredDevice>> get() = radar.discovered
 
@@ -352,7 +365,11 @@ class SyncNode(
         update { it }
 
         log("Recibido de ${payload.originDeviceName}${if (payload.isTest) " (prueba)" else ""}: ${payload.content.length} caracteres")
-        emit(if (payload.isTest) NodeEvent.TestReceived(payload.originDeviceName) else NodeEvent.ContentReceived(payload.originDeviceName, payload.content))
+        _lastReceived.value = ReceivedItem(payload.originDeviceName, payload.content, payload.isTest, now)
+        emit(
+            if (payload.isTest) NodeEvent.TestReceived(payload.originDeviceName, payload.content)
+            else NodeEvent.ContentReceived(payload.originDeviceName, payload.content)
+        )
         return Reply(200)
     }
 
