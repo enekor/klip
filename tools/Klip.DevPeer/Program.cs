@@ -27,6 +27,31 @@ try
             Console.WriteLine(Convert.ToHexStringLower(PairKeys.NewRandomSecret()));
             return 0;
 
+        case "mdns-test":
+        {
+            // Self-test of the native Windows DNS-SD integration: announce a random instance and resolve it back.
+            if (!OperatingSystem.IsWindows())
+            {
+                Console.WriteLine("Solo disponible en Windows.");
+                return 2;
+            }
+            using var mdns = new WindowsDnsSd(m => Console.WriteLine($"  [{m}]"), LanAddress.PreferredIPv4);
+            Console.WriteLine("IPs de la LAN: " + string.Join(", ", LanAddress.LocalIPv4()));
+            var id = "klip-selftest-" + Guid.NewGuid().ToString("N")[..8];
+            Console.WriteLine($"Registrando {id}._klip._tcp.local en el puerto 8799…");
+            mdns.Register(id, 8799);
+            await Task.Delay(2000);
+            using var cts = new CancellationTokenSource(5000);
+            var ip = await mdns.ResolveAsync(id, cts.Token);
+            Console.WriteLine(ip is null ? "Resolución: FALLÓ" : $"Resolución: OK -> {ip}");
+            using var cts2 = new CancellationTokenSource(1500);
+            var missing = await mdns.ResolveAsync("klip-no-existe-" + Guid.NewGuid().ToString("N")[..8], cts2.Token);
+            Console.WriteLine(missing is null ? "Instancia inexistente: OK (no resuelve)" : $"Instancia inexistente: INESPERADO -> {missing}");
+            mdns.Unregister();
+            await Task.Delay(500);
+            return ip is null ? 1 : 0;
+        }
+
         case "init":
         {
             var store = new ConfigStore(configPath);
@@ -175,7 +200,9 @@ catch (Exception e) when (e is ArgumentException or FormatException or IOExcepti
 SyncNode OpenNode(IClipboardWriter? clipboard = null)
 {
     if (!File.Exists(configPath)) throw new IOException($"No existe {configPath}. Ejecuta primero: KlipDevPeer init");
-    return new SyncNode(new ConfigStore(configPath), new PlainSecretProtector(), clipboard ?? new ConsoleClipboard());
+    var node = new SyncNode(new ConfigStore(configPath), new PlainSecretProtector(), clipboard ?? new ConsoleClipboard());
+    if (OperatingSystem.IsWindows()) node.Resolver = new WindowsDnsSd(m => Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {m}"), LanAddress.PreferredIPv4);
+    return node;
 }
 
 static string? TakeOption(List<string> list, string name)
@@ -197,6 +224,7 @@ static void PrintHelp() => Console.WriteLine("""
 
       init [--name N] [--port P]          Crea/actualiza la identidad (puerto por defecto 8765)
       new-secret                          Genera un secreto de pareja (64 hex)
+      mdns-test                           Autotest de mDNS nativo (solo Windows)
       add-peer --id ID --host H [--port P] [--name N] --secret HEX
                                           Vincula manualmente con otro dispositivo
       peers                               Lista los dispositivos vinculados
