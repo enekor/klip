@@ -232,7 +232,8 @@ internal sealed class ConfigWindow : Form
             }
 
             using var pin = new PinDialog($"Vincular con {pairing.DeviceName}", pairing.Pin, $"Comprueba que {pairing.DeviceName} muestra el mismo código.");
-            if (pin.ShowDialog(this) != DialogResult.OK)
+            pin.ShowDialog(this);
+            if (!pin.Accepted)
             {
                 SetActivity("");
                 await _node.CancelPairingAsync(pairing);
@@ -330,14 +331,28 @@ internal sealed class PinDialog : Form
         });
         layout.Controls.Add(new Label { Text = text, AutoSize = true, MaximumSize = new Size(380, 0), Anchor = AnchorStyles.None });
 
-        var yes = new Button { Text = "Coincide", DialogResult = DialogResult.OK, AutoSize = true, Padding = new Padding(10, 2, 10, 2) };
-        var no = new Button { Text = "No coincide", DialogResult = DialogResult.Cancel, AutoSize = true, Padding = new Padding(10, 2, 10, 2) };
+        // Buttons close the form explicitly: a button's DialogResult only closes MODAL forms, and the incoming
+        // pairing dialog is shown modeless (so it can be closed when the other side cancels).
+        var yes = new Button { Text = "Coincide", AutoSize = true, Padding = new Padding(10, 2, 10, 2) };
+        var no = new Button { Text = "No coincide", AutoSize = true, Padding = new Padding(10, 2, 10, 2) };
+        yes.Click += (_, _) => Answer(true);
+        no.Click += (_, _) => Answer(false);
         var buttons = new FlowLayoutPanel { AutoSize = true, Anchor = AnchorStyles.None, Padding = new Padding(0, 12, 0, 0) };
         buttons.Controls.AddRange([yes, no]);
         layout.Controls.Add(buttons);
         Controls.Add(layout);
         AcceptButton = yes;
         CancelButton = no;
+    }
+
+    /// <summary>True only if the user pressed "Coincide". Closing the window any other way means "no".</summary>
+    public bool Accepted { get; private set; }
+
+    private void Answer(bool accepted)
+    {
+        Accepted = accepted;
+        DialogResult = accepted ? DialogResult.OK : DialogResult.Cancel; // ends ShowDialog when modal
+        Close(); // needed when modeless
     }
 
     /// <summary>True when closed because the session ended elsewhere (not a user answer).</summary>

@@ -153,8 +153,8 @@ internal sealed class TrayApp : ApplicationContext
         _incomingSession = p.SessionId;
         dialog.FormClosed += (_, _) =>
         {
-            if (!dialog.ClosedExternally) _node.RespondToPairing(p.SessionId, dialog.DialogResult == DialogResult.OK);
-            if (dialog.DialogResult == DialogResult.OK && !dialog.ClosedExternally)
+            if (!dialog.ClosedExternally) _node.RespondToPairing(p.SessionId, dialog.Accepted);
+            if (dialog.Accepted && !dialog.ClosedExternally)
                 Balloon("Klip", $"Esperando la confirmación en {p.DeviceName}…");
             if (_incomingDialog == dialog) _incomingDialog = null;
             dialog.Dispose();
