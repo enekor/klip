@@ -181,6 +181,11 @@ class SyncNode(
 
     val syncEnabled: Boolean get() = config.syncEnabled
 
+    /** Opt-in (off by default): text marked as sensitive by password managers is sent like any other text. */
+    var sendSensitive: Boolean
+        get() = config.sendSensitive
+        set(value) = update { it.copy(sendSensitive = value) }
+
     /** True while the configuration UI is visible: only then are pairing requests accepted. */
     var pairingOpen: Boolean
         get() = pairing.open
@@ -319,7 +324,7 @@ class SyncNode(
 
     /** Applies the outgoing rules and sends to every enabled peer (or only [onlyDeviceId]). */
     suspend fun sendClipboard(content: String, isSensitive: Boolean = false, isTest: Boolean = false, onlyDeviceId: String? = null): SendOutcome {
-        val decision = state.evaluateOutgoing(content, isTest, isSensitive, syncEnabled)
+        val decision = state.evaluateOutgoing(content, isTest, isSensitive && !sendSensitive, syncEnabled)
         if (decision != OutgoingDecision.SEND) return SendOutcome(decision, emptyList())
         return sendPayload(ClipboardPayload.text(content, deviceName, isTest), decision, onlyDeviceId)
     }

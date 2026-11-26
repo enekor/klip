@@ -47,6 +47,10 @@ public sealed class NodeConfig
     public string Platform { get; set; } = "windows";
     public int HttpPort { get; set; } = Protocol.HttpPort;
     public bool SyncEnabled { get; set; } = true;
+
+    /// <summary>Opt-in: also send text that password managers mark as sensitive. Off by default.</summary>
+    public bool SendSensitive { get; set; }
+
     public bool StartWithWindows { get; set; } = true;
     public bool FirewallPromptShown { get; set; }
     public List<PeerConfig> Peers { get; set; } = [];

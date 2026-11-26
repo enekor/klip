@@ -109,6 +109,13 @@ class NodeTest {
         assertEquals("A", last.from)
         assertTrue(last.content.startsWith("Prueba de conexión desde A - "))
         assertEquals(clips[b]!!.writes.last(), last.content)
+
+        // Sensitive text only travels after the explicit opt-in.
+        a.sendSensitive = true
+        assertTrue(a.sendClipboard("pw", isSensitive = true).anyOk)
+        assertEquals("pw", clips[b]!!.writes.last())
+        a.sendSensitive = false
+        assertEquals(OutgoingDecision.SKIP_SENSITIVE, a.sendClipboard("pw2", isSensitive = true).decision)
     }
 
     @Test

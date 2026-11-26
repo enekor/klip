@@ -13,7 +13,7 @@
 | Versión mínima Android | **Android 10 (API 29)**. `targetSdk` = última estable. |
 | Servidor HTTP Android | **Ktor (motor CIO)**. |
 | Stack Windows | **.NET 10 LTS + WinForms + Kestrel**. |
-| Contenido sensible | Lo marcado como sensible por gestores de contraseñas **nunca se envía**. |
+| Contenido sensible | Lo marcado como sensible por gestores de contraseñas **no se envía**, salvo que el usuario active «Enviar también contraseñas» en la ventana principal de ese dispositivo (desactivado por defecto, solo texto). |
 | Destino desconectado | **Se descarta** el envío y se informa del fallo. Sin colas ni reintentos. |
 | Vías de captura Android | **Tile de Ajustes Rápidos**, **menú Compartir** (`ACTION_SEND`) y **menú de selección de texto** (`ACTION_PROCESS_TEXT`). |
 | Descubrimiento | **Radar UDP** solo con la UI abierta (para emparejar) + **mDNS/NSD permanente** (para resolver cambios de IP). |

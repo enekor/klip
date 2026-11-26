@@ -48,6 +48,8 @@ data class NodeConfig(
     val platform: String = "android",
     val httpPort: Int = Protocol.HTTP_PORT,
     val syncEnabled: Boolean = true,
+    /** Opt-in: also send text that password managers mark as sensitive. Off by default. */
+    val sendSensitive: Boolean = false,
     val peers: List<PeerConfig> = emptyList(),
     val pendingIntroductions: List<PendingIntroduction> = emptyList(),
     val sync: SyncSnapshot? = null,

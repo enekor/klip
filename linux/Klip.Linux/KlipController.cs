@@ -107,14 +107,15 @@ internal sealed class KlipController : IAsyncDisposable
         await _sendGate.WaitAsync();
         try
         {
-            var content = await Clipboard.ReadAsync();
-            if (content.Sensitive)
+            // Sensitive text is only read (and sent) when the user enabled it in the main window.
+            var content = await Clipboard.ReadAsync(includeSensitive: Node.SendSensitive);
+            if (content.Sensitive && content.Text is null)
             {
                 FileLog.Write("Contenido sensible en el portapapeles: no se envía");
                 return Report(manual, "Contenido sensible: no se envía");
             }
             SendOutcome outcome;
-            if (content.Text is not null) outcome = await Node.SendClipboardAsync(content.Text);
+            if (content.Text is not null) outcome = await Node.SendClipboardAsync(content.Text, isSensitive: content.Sensitive);
             else if (content.Image is not null) outcome = await Node.SendImageAsync(content.Image, content.ImageMimeType!);
             else return Report(manual, "El portapapeles no contiene texto ni imagen");
             var message = outcome.Decision switch
@@ -125,6 +126,7 @@ internal sealed class KlipController : IAsyncDisposable
                 OutgoingDecision.SkipAlreadySent or OutgoingDecision.SkipJustReceived => "Sin cambios nuevos",
                 OutgoingDecision.SkipBlank => "El portapapeles está vacío",
                 OutgoingDecision.SkipDisabled => "La sincronización está desactivada",
+                OutgoingDecision.SkipSensitive => "Contenido sensible: no se envía",
                 _ => outcome.Decision.ToString(),
             };
             if (!manual && outcome.Decision == OutgoingDecision.Send && outcome.Results.Count > 0 && !outcome.AnyOk)

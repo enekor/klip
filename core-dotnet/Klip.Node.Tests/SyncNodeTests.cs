@@ -130,6 +130,17 @@ public sealed class SyncNodeTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SensitiveIsSentOnlyWhenEnabled()
+    {
+        Assert.False(_a.SendSensitive);
+        _a.SendSensitive = true;
+        Assert.True((await _a.SendClipboardAsync("p4ssw0rd", isSensitive: true)).AnyOk);
+        Assert.Equal(["p4ssw0rd"], _clipB.Writes);
+        _a.SendSensitive = false;
+        Assert.Equal(OutgoingDecision.SkipSensitive, (await _a.SendClipboardAsync("0tr4", isSensitive: true)).Decision);
+    }
+
+    [Fact]
     public async Task DisablingStopsServerAndSending()
     {
         await _b.SetSyncEnabledAsync(false);

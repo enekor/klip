@@ -134,6 +134,13 @@ public sealed partial class SyncNode : IAsyncDisposable
         get { lock (_lock) return _config.SyncEnabled; }
     }
 
+    /// <summary>Opt-in (off by default): text marked as sensitive by password managers is sent like any other text.</summary>
+    public bool SendSensitive
+    {
+        get { lock (_lock) return _config.SendSensitive; }
+        set { lock (_lock) { _config.SendSensitive = value; Persist(); } }
+    }
+
     public bool StartWithWindows
     {
         get { lock (_lock) return _config.StartWithWindows; }
@@ -311,7 +318,7 @@ public sealed partial class SyncNode : IAsyncDisposable
     /// <summary>Applies the outgoing rules and sends to every enabled peer (or only <paramref name="onlyDeviceId"/>).</summary>
     public Task<SendOutcome> SendClipboardAsync(string content, bool isSensitive = false, bool isTest = false, string? onlyDeviceId = null)
     {
-        var decision = _state.EvaluateOutgoing(content, isTest, isSensitive, SyncEnabled);
+        var decision = _state.EvaluateOutgoing(content, isTest, isSensitive && !SendSensitive, SyncEnabled);
         return decision != OutgoingDecision.Send
             ? Task.FromResult(new SendOutcome(decision, []))
             : SendPayloadAsync(ClipboardPayload.Text(content, DeviceName, isTest), decision, onlyDeviceId);

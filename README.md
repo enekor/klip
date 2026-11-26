@@ -5,7 +5,7 @@ Sincronizador de portapapeles **100 % local** entre **Windows, Android y Linux**
 - **Cifrado de extremo a extremo:** cada mensaje va firmado (HMAC-SHA256) y cifrado (AES-256-GCM) con una clave distinta por cada pareja de dispositivos.
 - **Emparejamiento por PIN:** los dispositivos se descubren solos en la red; confirmas un código de 6 dígitos en ambas pantallas.
 - **Grupo automático:** vincula la tablet con el móvil y quedará vinculada también con el PC.
-- **Respeta los gestores de contraseñas:** lo que KeePass, KeePassXC, Bitwarden, 1Password… marcan como sensible nunca sale del dispositivo.
+- **Respeta los gestores de contraseñas:** lo que KeePass, KeePassXC, Bitwarden, 1Password… marcan como sensible no sale del dispositivo, salvo que actives «Enviar también contraseñas» en la ventana principal de ese dispositivo (desactivado por defecto).
 - **Antibucle:** lo recibido no se reenvía.
 
 ## Descargas

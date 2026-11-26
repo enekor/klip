@@ -198,7 +198,7 @@ Estado por dispositivo: `lastSentHash`, `lastReceivedHash`, `processedMessageIds
 | # | Condición | Resultado |
 | :--- | :--- | :--- |
 | 1 | sincronización desactivada | `SKIP_DISABLED` |
-| 2 | contenido marcado como sensible | `SKIP_SENSITIVE` |
+| 2 | contenido marcado como sensible, salvo que el usuario haya activado «Enviar también contraseñas» en este dispositivo (ajuste local `sendSensitive`, desactivado por defecto; solo texto) | `SKIP_SENSITIVE` |
 | 3 | `isBlank(content)` | `SKIP_BLANK` |
 | 4 | no es prueba y `hash == lastSentHash` | `SKIP_ALREADY_SENT` |
 | 5 | no es prueba y `hash == lastReceivedHash` | `SKIP_JUST_RECEIVED` |

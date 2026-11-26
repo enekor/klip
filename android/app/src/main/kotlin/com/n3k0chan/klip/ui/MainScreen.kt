@@ -357,6 +357,8 @@ private fun PeerRow(
 private fun Settings(refreshTick: Int) {
     val context = LocalContext.current
     val prefs = context.klip.prefs
+    val node = context.klip.node
+    var sensitive by remember(refreshTick) { mutableStateOf(node.sendSensitive) }
     var receiver by remember(refreshTick) { mutableStateOf(prefs.receiverEnabled) }
     var boot by remember(refreshTick) { mutableStateOf(prefs.startOnBoot) }
     var tile by remember(refreshTick) { mutableStateOf(Components.isEnabled(context, QuickTileService::class.java)) }
@@ -379,6 +381,9 @@ private fun Settings(refreshTick: Int) {
             }
             SettingRow("Envío desde la selección de texto", "Selecciona texto → «Enviar con Klip»", select) {
                 select = it; Components.setEnabled(context, ProcessTextActivity::class.java, it)
+            }
+            SettingRow("Enviar también contraseñas", "Texto que los gestores de contraseñas marcan como sensible (Ajustes rápidos)", sensitive) {
+                sensitive = it; node.sendSensitive = it
             }
         }
     }

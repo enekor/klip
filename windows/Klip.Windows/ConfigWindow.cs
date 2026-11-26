@@ -15,6 +15,12 @@ internal sealed class ConfigWindow : Form
     private readonly Label _status = new() { AutoSize = true };
     private readonly Label _lastReceived = new() { AutoSize = true, MaximumSize = new Size(620, 0) };
     private readonly PictureBox _lastImage = new() { Size = new Size(200, 120), SizeMode = PictureBoxSizeMode.Zoom, Visible = false, BorderStyle = BorderStyle.FixedSingle };
+    private readonly CheckBox _sendSensitive = new()
+    {
+        Text = "Enviar también contraseñas (texto que los gestores de contraseñas marcan como sensible)",
+        AutoSize = true,
+        Margin = new Padding(3, 6, 3, 0),
+    };
     private readonly Label _activity = new() { AutoSize = true, ForeColor = Color.DimGray, Padding = new Padding(8, 4, 8, 4) };
     private readonly ListView _discovered = NewList(checkBoxes: false);
     private readonly ListView _peers = NewList(checkBoxes: true);
@@ -48,6 +54,12 @@ internal sealed class ConfigWindow : Form
         identity.Controls.Add(_lastReceived, 1, 3);
         identity.SetColumnSpan(_lastReceived, 2);
         identity.Controls.Add(_lastImage, 1, 4);
+        identity.Controls.Add(_sendSensitive, 0, 5);
+        identity.SetColumnSpan(_sendSensitive, 3);
+        _sendSensitive.CheckedChanged += (_, _) =>
+        {
+            if (_sendSensitive.Checked != _node.SendSensitive) _node.SendSensitive = _sendSensitive.Checked;
+        };
 
         // ---- Radar ----
         _discovered.Columns.Add("Nombre", 200);
@@ -160,6 +172,7 @@ internal sealed class ConfigWindow : Form
               $"{Environment.NewLine}{(r.IsImage ? r.Preview() : $"«{r.Preview(200)}»")}"
             : "nada todavía";
         ShowLastImage(_node.LastReceived);
+        _sendSensitive.Checked = _node.SendSensitive;
 
         var selectedDiscovered = SelectedTag(_discovered);
         _discovered.BeginUpdate();

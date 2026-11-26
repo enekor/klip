@@ -22,6 +22,7 @@ internal sealed class MainWindow : Window
     private readonly TextBlock _activity = new() { Foreground = Brushes.Gray, Margin = new Thickness(0, 8, 0, 0) };
     private readonly ToggleSwitch _sync = new() { OnContent = "Sincronización activada", OffContent = "Sincronización pausada" };
     private readonly CheckBox _autostart = new() { Content = "Iniciar con la sesión" };
+    private readonly CheckBox _sendSensitive = new() { Content = "Enviar también contraseñas (texto que los gestores de contraseñas marcan como sensible)" };
     private readonly StackPanel _discovered = new() { Spacing = 6 };
     private readonly StackPanel _peers = new() { Spacing = 6 };
     private bool _refreshing;
@@ -50,6 +51,11 @@ internal sealed class MainWindow : Window
         {
             if (!_refreshing && (_autostart.IsChecked == true) != _node.StartWithWindows) _app.ToggleAutostart();
         };
+        _sendSensitive.IsCheckedChanged += (_, _) =>
+        {
+            var enabled = _sendSensitive.IsChecked == true;
+            if (!_refreshing && enabled != _node.SendSensitive) _node.SendSensitive = enabled;
+        };
         var sendNow = new Button { Content = "Enviar portapapeles ahora" };
         sendNow.Click += async (_, _) => SetActivity(await _app.Controller.SendCurrentAsync(manual: false));
         var testAll = new Button { Content = "Enviar prueba a todos" };
@@ -75,6 +81,7 @@ internal sealed class MainWindow : Window
                             Row(Label("Estado:"), _status),
                             Row(Label("Envío:"), _sendMode),
                             Row(_sync, _autostart),
+                            _sendSensitive,
                             Row(sendNow, testAll),
                         },
                     }),
@@ -132,6 +139,7 @@ internal sealed class MainWindow : Window
             _status.Foreground = on ? Brushes.SeaGreen : error is not null ? Brushes.IndianRed : Brushes.Gray;
             _sync.IsChecked = _node.SyncEnabled;
             _autostart.IsChecked = _node.StartWithWindows;
+            _sendSensitive.IsChecked = _node.SendSensitive;
             _sendMode.Text = SendModeText();
             _lastReceived.Text = _node.LastReceived is { } r
                 ? $"{DateTimeOffset.FromUnixTimeMilliseconds(r.AtMs).LocalDateTime:HH:mm:ss} · de {r.From}{(r.IsTest ? " · prueba" : "")}\n{(r.IsImage ? r.Preview() : $"«{r.Preview(300)}»")}"

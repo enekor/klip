@@ -29,7 +29,11 @@ public interface ILinuxClipboard : IDisposable
 
     void StopWatching();
 
-    Task<ClipboardContent> ReadAsync();
+    /// <summary>
+    /// Reads the clipboard. Content marked as sensitive comes back flagged and without data, unless
+    /// <paramref name="includeSensitive"/> (user opt-in): then its text is read too, still flagged.
+    /// </summary>
+    Task<ClipboardContent> ReadAsync(bool includeSensitive = false);
 
     Task WriteAsync(string text);
 
@@ -110,21 +114,24 @@ public sealed class WaylandClipboard : ILinuxClipboard
         _watcher = null;
     }
 
-    public async Task<ClipboardContent> ReadAsync()
+    public async Task<ClipboardContent> ReadAsync(bool includeSensitive = false)
     {
         var types = await Shell.RunAsync("wl-paste", ["--list-types"]);
         if (!types.Ok) return new ClipboardContent(null, false); // empty clipboard
         var list = types.Text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var sensitive = false;
         if (list.Contains(LinuxClipboard.PasswordHintTarget))
         {
             var hint = await Shell.RunAsync("wl-paste", ["--no-newline", "--type", LinuxClipboard.PasswordHintTarget]);
-            if (hint.Ok && LinuxClipboard.IsSecretHint(hint.Stdout)) return new ClipboardContent(null, true);
+            sensitive = hint.Ok && LinuxClipboard.IsSecretHint(hint.Stdout);
         }
+        if (sensitive && !includeSensitive) return new ClipboardContent(null, true);
         if (list.Any(LinuxClipboard.IsText))
         {
             var text = await Shell.RunAsync("wl-paste", ["--no-newline", "--type", "text"]);
-            return new ClipboardContent(text.Ok ? text.Text : null, false);
+            return new ClipboardContent(text.Ok ? text.Text : null, sensitive);
         }
+        if (sensitive) return new ClipboardContent(null, true); // sensitive content is only ever sent as text
         if (LinuxClipboard.ImageTypes.FirstOrDefault(list.Contains) is { } imageType)
         {
             var image = await Shell.RunAsync("wl-paste", ["--type", imageType], timeoutMs: 15_000);
@@ -234,22 +241,25 @@ public sealed class X11Clipboard : ILinuxClipboard
         ready.TrySetResult(false);
     }
 
-    public async Task<ClipboardContent> ReadAsync()
+    public async Task<ClipboardContent> ReadAsync(bool includeSensitive = false)
     {
         var targets = await Shell.RunAsync("xclip", ["-selection", "clipboard", "-o", "-t", "TARGETS"]);
         if (!targets.Ok) return new ClipboardContent(null, false); // empty clipboard
         var list = targets.Text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var sensitive = false;
         if (list.Contains(LinuxClipboard.PasswordHintTarget))
         {
             var hint = await Shell.RunAsync("xclip", ["-selection", "clipboard", "-o", "-t", LinuxClipboard.PasswordHintTarget]);
-            if (hint.Ok && LinuxClipboard.IsSecretHint(hint.Stdout)) return new ClipboardContent(null, true);
+            sensitive = hint.Ok && LinuxClipboard.IsSecretHint(hint.Stdout);
         }
+        if (sensitive && !includeSensitive) return new ClipboardContent(null, true);
         var target = list.Contains("UTF8_STRING") ? "UTF8_STRING" : list.Contains("text/plain;charset=utf-8") ? "text/plain;charset=utf-8" : list.Contains("STRING") ? "STRING" : null;
         if (target is not null)
         {
             var text = await Shell.RunAsync("xclip", ["-selection", "clipboard", "-o", "-t", target]);
-            return new ClipboardContent(text.Ok ? text.Text : null, false);
+            return new ClipboardContent(text.Ok ? text.Text : null, sensitive);
         }
+        if (sensitive) return new ClipboardContent(null, true); // sensitive content is only ever sent as text
         if (LinuxClipboard.ImageTypes.FirstOrDefault(list.Contains) is { } imageType)
         {
             var image = await Shell.RunAsync("xclip", ["-selection", "clipboard", "-o", "-t", imageType], timeoutMs: 15_000);

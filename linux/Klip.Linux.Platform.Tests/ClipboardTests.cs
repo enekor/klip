@@ -78,6 +78,12 @@ public abstract class ClipboardContract
         var read = await cb.ReadAsync();
         Assert.True(read.Sensitive);
         Assert.Null(read.Text);
+
+        // Opt-in: still flagged, and never anything but text (there is none here).
+        read = await cb.ReadAsync(includeSensitive: true);
+        Assert.True(read.Sensitive);
+        Assert.Null(read.Text);
+        Assert.Null(read.Image);
     }
 }
 

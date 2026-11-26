@@ -34,8 +34,12 @@ internal sealed class ClipboardMonitor : NativeWindow, IDisposable
 
     public bool IsListening { get; private set; }
 
-    public ClipboardMonitor()
+    private readonly Func<bool> _readSensitive;
+
+    /// <param name="readSensitive">Asked on every copy: true to read text marked as sensitive (user opt-in).</param>
+    public ClipboardMonitor(Func<bool> readSensitive)
     {
+        _readSensitive = readSensitive;
         CreateHandle(new CreateParams { Parent = HWND_MESSAGE });
         _debounce.Tick += (_, _) => { _debounce.Stop(); Process(); };
     }
@@ -93,13 +97,15 @@ internal sealed class ClipboardMonitor : NativeWindow, IDisposable
                             || IsClipboardFormatAvailable(FmtViewerIgnore)
                             || DwordFormatIsZero(FmtCanIncludeInHistory)
                             || DwordFormatIsZero(FmtCanUploadToCloud);
-            if (sensitive) return new ClipboardRead(null, null, true);
+            // Sensitive content is not even read unless the user opted in, and then only as text.
+            if (sensitive && !(_readSensitive() && IsClipboardFormatAvailable(CF_UNICODETEXT)))
+                return new ClipboardRead(null, null, true);
 
             // Text wins when both are present (e.g. a cell copied from a spreadsheet).
             if (IsClipboardFormatAvailable(CF_UNICODETEXT))
             {
                 var text = ReadGlobal(CF_UNICODETEXT, ptr => Marshal.PtrToStringUni(ptr));
-                return new ClipboardRead(text, null, false);
+                return new ClipboardRead(text, null, sensitive);
             }
             // Browsers and Office publish the original PNG: take it as is.
             if (FmtPng != 0 && IsClipboardFormatAvailable(FmtPng))

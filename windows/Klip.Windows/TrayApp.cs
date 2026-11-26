@@ -42,7 +42,7 @@ internal sealed class TrayApp : ApplicationContext
         _node.PairingRequested += p => _ui.Post(_ => ShowIncomingPairing(p), null);
         _node.IncomingPairingFinished += (sessionId, status, name) => _ui.Post(_ => OnIncomingPairingFinished(sessionId, status, name), null);
 
-        _monitor = new ClipboardMonitor();
+        _monitor = new ClipboardMonitor(() => _node.SendSensitive);
         _monitor.Copied += OnLocalCopy;
 
         _syncItem = new ToolStripMenuItem("Sincronización activada") { CheckOnClick = false };
@@ -117,15 +117,17 @@ internal sealed class TrayApp : ApplicationContext
 
     private async void OnLocalCopy(ClipboardRead read)
     {
-        if (read.Sensitive)
+        SendOutcome outcome;
+        // The node only lets sensitive text through when the user enabled it in the configuration window.
+        if (read.Text is not null) outcome = await _node.SendClipboardAsync(read.Text, isSensitive: read.Sensitive);
+        else if (read.Sensitive) outcome = new SendOutcome(OutgoingDecision.SkipSensitive, []);
+        else if (read.Png is not null) outcome = await _node.SendImageAsync(read.Png, "image/png");
+        else return;
+        if (outcome.Decision == OutgoingDecision.SkipSensitive)
         {
             FileLog.Write("Contenido sensible detectado en el portapapeles: no se envía");
             return;
         }
-        SendOutcome outcome;
-        if (read.Text is not null) outcome = await _node.SendClipboardAsync(read.Text);
-        else if (read.Png is not null) outcome = await _node.SendImageAsync(read.Png, "image/png");
-        else return;
         if (outcome.Decision == OutgoingDecision.Send && outcome.Results.Count > 0 && !outcome.AnyOk)
         {
             FileLog.Write("Ningún dispositivo recibió la copia: " + string.Join(", ", outcome.Results.Select(r => $"{r.Name}: {r.Error}")));
