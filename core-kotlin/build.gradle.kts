@@ -5,7 +5,7 @@ plugins {
 
 allprojects {
     group = "com.n3k0chan.klip"
-    version = "1.0.0"
+    version = "1.1.0"
 }
 
 kotlin {
