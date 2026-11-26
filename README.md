@@ -91,3 +91,7 @@ linux/test-clipboard.sh         # tests del portapapeles Linux con Xvfb y sway h
 | `linux/` | App de bandeja para Linux (Avalonia) y su capa de plataforma |
 | `android/` | App Android (Compose) |
 | `tools/Klip.DevPeer/` | Dispositivo Klip de consola para pruebas e interoperabilidad |
+
+## Licencia
+
+Klip es software libre bajo la [GNU General Public License v3.0](LICENSE) (`GPL-3.0-only`): puedes usarlo, estudiarlo, modificarlo y redistribuirlo, siempre que las versiones derivadas sigan publicándose bajo la misma licencia. Se distribuye sin ninguna garantía.

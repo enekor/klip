@@ -1,0 +1,18 @@
+Klip sincroniza el portapapeles entre Android, Windows y Linux dentro de tu red local: copias texto, enlaces o imágenes en un dispositivo y los pegas en otro. Sin nube, sin cuentas y sin root.
+
+<b>Funciones</b>
+
+* Texto, enlaces e imágenes (PNG y JPEG; otros formatos se convierten a PNG).
+* Cifrado de extremo a extremo: cada mensaje va firmado (HMAC-SHA256) y cifrado (AES-256-GCM) con una clave distinta por cada pareja de dispositivos.
+* Emparejamiento por PIN: los dispositivos se descubren solos en la red y confirmas un código de 6 dígitos en ambas pantallas.
+* Grupo automático: al vincular un dispositivo nuevo queda vinculado también con los demás.
+* Respeta los gestores de contraseñas: lo marcado como sensible no se envía, salvo que actives «Enviar también contraseñas».
+* Todo ocurre en la red local; no hay servidores externos ni telemetría.
+
+<b>Cómo se envía desde Android</b>
+
+Android no deja a las apps leer el portapapeles en segundo plano, así que el envío necesita un gesto: el botón de Ajustes rápidos «Enviar portapapeles», el menú Compartir (texto o imagen) o el menú de selección de texto. La recepción es automática mientras el receptor en segundo plano está activo.
+
+<b>Necesitas</b>
+
+Klip instalado en al menos otro dispositivo (Windows, Linux u otro Android) conectado a la misma red Wi-Fi. Las aplicaciones de escritorio se descargan desde la página del proyecto.

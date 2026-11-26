@@ -1,0 +1,18 @@
+Klip syncs the clipboard between Android, Windows and Linux inside your local network: copy text, links or images on one device and paste them on another. No cloud, no accounts, no root.
+
+<b>Features</b>
+
+* Text, links and images (PNG and JPEG; other formats are converted to PNG).
+* End-to-end encryption: every message is signed (HMAC-SHA256) and encrypted (AES-256-GCM) with a different key for each pair of devices.
+* PIN pairing: devices find each other on the network and you confirm a 6-digit code on both screens.
+* Automatic group: a newly paired device is also paired with the rest of your devices.
+* Respects password managers: content marked as sensitive is not sent unless you turn on "Also send passwords".
+* Everything stays on the local network; there are no external servers and no telemetry.
+
+<b>Sending from Android</b>
+
+Android does not let apps read the clipboard in the background, so sending needs a gesture: the "Send clipboard" Quick Settings tile, the Share menu (text or image) or the text selection menu. Receiving is automatic while the background receiver is enabled.
+
+<b>Requirements</b>
+
+Klip installed on at least one other device (Windows, Linux or another Android) on the same Wi-Fi network. The desktop apps are available from the project page. The app interface is in Spanish.

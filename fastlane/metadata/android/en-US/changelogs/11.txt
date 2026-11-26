@@ -1,0 +1,1 @@
+New "Also send passwords" option (off by default): lets you send text that password managers mark as sensitive.

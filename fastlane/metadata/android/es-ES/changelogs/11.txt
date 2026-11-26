@@ -1,0 +1,1 @@
+Nueva opción «Enviar también contraseñas» (desactivada por defecto): permite enviar el texto que los gestores de contraseñas marcan como sensible.
