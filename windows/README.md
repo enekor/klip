@@ -7,7 +7,8 @@ App de bandeja del sistema (.NET 10 + WinForms + Kestrel). La lógica de red y s
 | :--- | :--- |
 | `TrayApp.cs` | Icono de bandeja, interruptor único de sincronización (persistente), avisos |
 | `ClipboardMonitor.cs` | `WM_CLIPBOARDUPDATE`, antirrebote, ignorar escrituras propias, reintentos, contenido sensible; escritura con CRLF |
-| `ConfigWindow.cs` | Ventana de configuración y alta manual de dispositivos (modo desarrollo) |
+| `ConfigWindow.cs` | Ventana principal (pestañas Dispositivos / Ajustes), diálogos de PIN, vincular por IP y alta manual |
+| `Ui.cs` | Paleta clara/oscura (sigue el modo de Windows) y controles propios: tarjetas, interruptor, pestañas, iconos |
 | `Platform.cs` | DPAPI, log, inicio con Windows, firewall, IPs locales |
 
 Datos en `%APPDATA%\Klip\` (`config.json`, `logs\klip.log`).

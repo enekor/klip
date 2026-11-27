@@ -1,105 +1,142 @@
 using Klip.Core;
 using Klip.Node;
+using static Klip.Windows.Ui;
 
 namespace Klip.Windows;
 
 /// <summary>
-/// Configuration window (plan §4.1). While visible: pairing window open and UDP radar running.
+/// Main window (plan §4.1). While visible: pairing window open and UDP radar running.
+/// Header with the device, its status and the sync switch; a "Dispositivos" tab with the last received item,
+/// paired devices (each with its own actions) and nearby devices; and an "Ajustes" tab.
 /// </summary>
 internal sealed class ConfigWindow : Form
 {
     private readonly TrayApp _app;
     private readonly SyncNode _node;
-    private readonly TextBox _name = new() { Width = 260 };
-    private readonly Label _address = new() { AutoSize = true };
-    private readonly Label _status = new() { AutoSize = true };
-    private readonly Label _lastReceived = new() { AutoSize = true, MaximumSize = new Size(620, 0) };
-    private readonly PictureBox _lastImage = new() { Size = new Size(200, 120), SizeMode = PictureBoxSizeMode.Zoom, Visible = false, BorderStyle = BorderStyle.FixedSingle };
-    private readonly CheckBox _sendSensitive = new()
-    {
-        Text = "Enviar también contraseñas (texto que los gestores de contraseñas marcan como sensible)",
-        AutoSize = true,
-        Margin = new Padding(3, 6, 3, 0),
-    };
-    private readonly Label _activity = new() { AutoSize = true, ForeColor = Color.DimGray, Padding = new Padding(8, 4, 8, 4) };
-    private readonly ListView _discovered = NewList(checkBoxes: false);
-    private readonly ListView _peers = NewList(checkBoxes: true);
-    private bool _refreshing;
+    private readonly Palette _p = Palette.Current();
+
+    // Header
+    private readonly Label _subtitle;
+    private readonly Pill _status = new();
+    private readonly ToggleSwitch _sync;
+    private readonly Card _banner;
+    private readonly Label _bannerText;
+
+    // Devices tab
+    private readonly Page _devices;
+    private readonly Row _lastReceivedHost = new(Row.Fill);
+    private readonly Row _peers = new(Row.Fill);
+    private readonly Row _discovered = new(Row.Fill);
+    private string? _lastReceivedKey;
+    private string? _peersKey;
+    private string? _discoveredKey;
+    private readonly Pill _peerCount = new();
+    private byte[]? _shownImage;
+    private Image? _shownBitmap;
+
+    // Settings tab
+    private readonly Page _settings;
+    private readonly TextBox _name;
+    private readonly Label _address;
+    private readonly ToggleSwitch _autostart;
+    private readonly ToggleSwitch _sendSensitive;
+
+    // Toast
+    private readonly Card _toast;
+    private readonly Label _toastText;
+    private readonly System.Windows.Forms.Timer _toastTimer = new() { Interval = 5000 };
+
     private bool _busy;
 
     public ConfigWindow(TrayApp app)
     {
         _app = app;
         _node = app.Node;
-        Text = "Klip — Configuración";
+        Text = "Klip";
         Icon = AppIcon.Main;
-        Width = 900;
-        Height = 640;
-        MinimumSize = new Size(760, 520);
+        Font = Body;
+        BackColor = _p.Background;
+        ForeColor = _p.Text;
+        AutoScaleMode = AutoScaleMode.None; // sizes are scaled by hand with S()
+        ClientSize = new Size(this.S(800), this.S(720));
+        MinimumSize = new Size(this.S(640), this.S(520));
         StartPosition = FormStartPosition.CenterScreen;
-        Font = new Font("Segoe UI", 9.5f);
+        DoubleBuffered = true;
+        ApplyTitleBar(this, _p);
 
-        // ---- This device ----
-        var identity = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3, Padding = new Padding(10, 10, 10, 0) };
-        identity.Controls.Add(new Label { Text = "Nombre:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
-        identity.Controls.Add(_name, 1, 0);
-        var saveName = new Button { Text = "Guardar", AutoSize = true };
-        saveName.Click += (_, _) => SaveName();
-        identity.Controls.Add(saveName, 2, 0);
-        identity.Controls.Add(new Label { Text = "Dirección:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
-        identity.Controls.Add(_address, 1, 1);
-        identity.Controls.Add(new Label { Text = "Estado:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 2);
-        identity.Controls.Add(_status, 1, 2);
-        identity.Controls.Add(new Label { Text = "Última recepción:", AutoSize = true, Anchor = AnchorStyles.Left | AnchorStyles.Top }, 0, 3);
-        identity.Controls.Add(_lastReceived, 1, 3);
-        identity.SetColumnSpan(_lastReceived, 2);
-        identity.Controls.Add(_lastImage, 1, 4);
-        identity.Controls.Add(_sendSensitive, 0, 5);
-        identity.SetColumnSpan(_sendSensitive, 3);
+        _subtitle = Lbl("", Small, _p.TextSecondary);
+        _sync = new ToggleSwitch(_p) { Anchor = AnchorStyles.None };
+        _sync.CheckedChanged += async (_, _) => await _app.SetSyncAsync(_sync.Checked);
+        _bannerText = Lbl("", Body, _p.Text, wrap: true);
+        _banner = new AutoCard(new Row(Row.Fill).Add(_bannerText, 0), _p.SurfaceAlt, Color.Empty, new Padding(this.S(14), this.S(10), this.S(14), this.S(10)))
+        {
+            Dock = DockStyle.Top,
+            Visible = false,
+        };
+
+        _name = new TextBox
+        {
+            Width = this.S(240),
+            MaxLength = 64,
+            BorderStyle = BorderStyle.FixedSingle,
+            BackColor = _p.Dark ? _p.SurfaceAlt : _p.Surface,
+            ForeColor = _p.Text,
+            Font = Body,
+            Anchor = AnchorStyles.Right,
+        };
+        _name.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode != Keys.Enter) return;
+            e.SuppressKeyPress = true;
+            SaveName();
+        };
+        _name.Leave += (_, _) => SaveName();
+        _address = Lbl("", Small, _p.TextSecondary);
+        _address.Anchor = AnchorStyles.Right;
+        _autostart = new ToggleSwitch(_p);
+        _autostart.CheckedChanged += (_, _) =>
+        {
+            if (_autostart.Checked != _node.StartWithWindows) _app.ToggleAutostart();
+            RefreshAll();
+        };
+        _sendSensitive = new ToggleSwitch(_p);
         _sendSensitive.CheckedChanged += (_, _) =>
         {
             if (_sendSensitive.Checked != _node.SendSensitive) _node.SendSensitive = _sendSensitive.Checked;
         };
 
-        // ---- Radar ----
-        _discovered.Columns.Add("Nombre", 200);
-        _discovered.Columns.Add("Plataforma", 90);
-        _discovered.Columns.Add("Dirección", 160);
-        _discovered.Columns.Add("Estado", 300);
-        _discovered.DoubleClick += async (_, _) => await PairSelected();
-        var radarButtons = Buttons(
-            ("Vincular", async () => await PairSelected()),
-            ("Vincular por IP…", async () => await PairByIp()));
-        var radar = Group("Dispositivos detectados en la red (abre Klip en el otro dispositivo)", _discovered, radarButtons);
-
-        // ---- Paired ----
-        _peers.Columns.Add("Activo / Nombre", 170);
-        _peers.Columns.Add("Plataforma", 85);
-        _peers.Columns.Add("Dirección", 150);
-        _peers.Columns.Add("Última conexión", 120);
-        _peers.Columns.Add("Estado", 200);
-        _peers.ItemChecked += (_, e) =>
+        _toastText = Lbl("", Body, _p.Text, wrap: true);
+        _toast = new AutoCard(new Row(Row.Fill).Add(_toastText, 0), _p.SurfaceAlt, _p.Stroke, new Padding(this.S(14), this.S(10), this.S(14), this.S(10)))
         {
-            if (!_refreshing && e.Item.Tag is string id) _node.SetPeerEnabled(id, e.Item.Checked);
+            Visible = false,
+            Anchor = AnchorStyles.Bottom,
         };
-        var peerButtons = Buttons(
-            ("Comprobar conexión", async () => await PingSelected()),
-            ("Enviar prueba", async () => await TestSelected()),
-            ("Enviar prueba a todos", async () => await _app.SendTestAsync(null)),
-            ("Desvincular", async () => await UnpairSelected()),
-            ("Expulsar del grupo", async () => await ExpelSelected()),
-            ("Añadir manualmente (avanzado)…", AddManual));
-        var paired = Group("Dispositivos vinculados (marca los que reciben tus copias)", _peers, peerButtons);
+        _toastTimer.Tick += (_, _) => { _toastTimer.Stop(); _toast.Visible = false; };
 
-        var lists = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1, Padding = new Padding(6) };
-        lists.RowStyles.Add(new RowStyle(SizeType.Percent, 40));
-        lists.RowStyles.Add(new RowStyle(SizeType.Percent, 60));
-        lists.Controls.Add(radar, 0, 0);
-        lists.Controls.Add(paired, 0, 1);
+        _devices = new Page(_p.Background);
+        _settings = new Page(_p.Background) { Visible = false };
+        BuildDevicesPage();
+        BuildSettingsPage();
 
-        Controls.Add(lists);
-        Controls.Add(new Panel { Dock = DockStyle.Bottom, Height = 26, Controls = { _activity } });
-        Controls.Add(identity);
+        var tabs = new TabStrip(_p, "Dispositivos", "Ajustes");
+        tabs.SelectedChanged += (_, _) =>
+        {
+            _devices.Visible = tabs.Selected == 0;
+            _settings.Visible = tabs.Selected == 1;
+        };
+
+        var content = new Panel { Dock = DockStyle.Fill, BackColor = _p.Background };
+        content.Controls.Add(_toast);
+        content.Controls.Add(_settings);
+        content.Controls.Add(_devices);
+        content.Resize += (_, _) => PlaceToast(content);
+        _toast.SizeChanged += (_, _) => PlaceToast(content);
+        _toast.BringToFront();
+
+        // Docking order: last added docks first.
+        Controls.Add(content);
+        Controls.Add(tabs);
+        Controls.Add(Header());
 
         _node.PeersChanged += OnNodeChanged;
         _node.Received += OnReceived;
@@ -117,39 +154,189 @@ internal sealed class ConfigWindow : Form
             _node.PeersChanged -= OnNodeChanged;
             _node.Received -= OnReceived;
             _node.DiscoveredChanged -= OnNodeChanged;
+            _toastTimer.Dispose();
+            _shownBitmap?.Dispose();
         };
         RefreshAll();
     }
 
-    private static ListView NewList(bool checkBoxes) => new()
-    {
-        View = View.Details,
-        FullRowSelect = true,
-        CheckBoxes = checkBoxes,
-        MultiSelect = false,
-        Dock = DockStyle.Fill,
-        HideSelection = false,
-    };
+    // ---------- Layout ----------
 
-    private static FlowLayoutPanel Buttons(params (string Text, Action OnClick)[] buttons)
+    private Control Header()
     {
-        var panel = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, Padding = new Padding(0, 4, 0, 0) };
-        foreach (var (text, onClick) in buttons)
+        var icon = new PictureBox
         {
-            var b = new Button { Text = text, AutoSize = true, Padding = new Padding(6, 2, 6, 2) };
-            b.Click += (_, _) => onClick();
-            panel.Controls.Add(b);
-        }
-        return panel;
+            Image = new Icon(AppIcon.Main, this.S(48), this.S(48)).ToBitmap(),
+            SizeMode = PictureBoxSizeMode.Zoom,
+            Size = new Size(this.S(44), this.S(44)),
+            Margin = new Padding(0, 0, this.S(14), 0),
+            Anchor = AnchorStyles.Left,
+        };
+        var texts = new FlowLayoutPanel
+        {
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
+            Margin = new Padding(0),
+            BackColor = Color.Transparent,
+        };
+        texts.Controls.Add(Lbl("Klip", TitleFont, _p.Text));
+        texts.Controls.Add(_subtitle);
+        _status.Margin = new Padding(0, 0, this.S(12), 0);
+        _status.Anchor = AnchorStyles.Right;
+        var top = new Row(Row.Auto, Row.Fill, Row.Auto, Row.Auto) { Dock = DockStyle.Top };
+        top.Add(icon, 0).Add(texts, 1).Add(_status, 2).Add(_sync, 3);
+        new ToolTip().SetToolTip(_sync, "Activar o pausar la sincronización");
+
+        var spacer = new Panel { Dock = DockStyle.Top, Height = this.S(12), BackColor = Color.Transparent };
+        var header = new Panel
+        {
+            Dock = DockStyle.Top,
+            BackColor = _p.Background,
+            Padding = new Padding(this.S(24), this.S(18), this.S(22), this.S(4)),
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        header.Controls.Add(_banner);
+        header.Controls.Add(spacer);
+        header.Controls.Add(top);
+        return header;
     }
 
-    private static GroupBox Group(string title, Control list, Control buttons)
+    /// <summary>
+    /// Page-level block: takes the page width and the height of its (auto-sized) content. Auto-sized containers
+    /// placed directly on the page would shrink their width to the content instead.
+    /// </summary>
+    private Control Block(Control content) => new AutoCard(content, _p.Background, Color.Empty, Padding.Empty) { Margin = new Padding(0) };
+
+    /// <summary>Replaces the cards of a vertical stack (one per row, stretched to the stack width).</summary>
+    private static void SetChildren(Row stack, IEnumerable<Control> children)
     {
-        var g = new GroupBox { Text = title, Dock = DockStyle.Fill, Padding = new Padding(8) };
-        g.Controls.Add(list);
-        g.Controls.Add(buttons);
-        return g;
+        stack.SuspendLayout();
+        stack.Controls.ClearAndDispose();
+        stack.RowStyles.Clear();
+        stack.RowCount = 0;
+        var i = 0;
+        foreach (var c in children)
+        {
+            c.Dock = DockStyle.Fill;
+            stack.Add(c, 0, i++);
+        }
+        stack.ResumeLayout(true);
     }
+
+    private Control Section(string title, Control? trailing = null, Control? badge = null)
+    {
+        var row = new Row(Row.Auto, Row.Auto, Row.Fill, Row.Auto) { Padding = new Padding(this.S(2), this.S(18), 0, this.S(8)) };
+        row.Add(Lbl(title, SectionFont, _p.Text), 0);
+        if (badge is not null)
+        {
+            badge.Margin = new Padding(this.S(8), 0, 0, 0);
+            row.Add(badge, 1);
+        }
+        if (trailing is not null) row.Add(trailing, 3);
+        return Block(row);
+    }
+
+    private Card NewCard(Control content) =>
+        new AutoCard(content, _p.Surface, _p.Stroke, new Padding(this.S(16), this.S(14), this.S(16), this.S(14))) { Margin = new Padding(0, 0, 0, this.S(8)) };
+
+    private Control EmptyState(string title, string text)
+    {
+        var rows = new Row(Row.Fill);
+        rows.Add(Lbl(title, Strong, _p.Text), 0, 0);
+        var t = Lbl(text, Small, _p.TextSecondary, wrap: true);
+        t.Margin = new Padding(0, this.S(3), 0, 0);
+        rows.Add(t, 0, 1);
+        var card = new AutoCard(rows, _p.Background, _p.Stroke, new Padding(this.S(18), this.S(16), this.S(18), this.S(16))) { Margin = new Padding(0, 0, 0, this.S(8)) };
+        return card;
+    }
+
+    private void BuildDevicesPage()
+    {
+        var testAll = Btn(_p, "Enviar prueba a todos", ButtonKind.Subtle, _p.Background);
+        testAll.Click += async (_, _) => await _app.SendTestAsync(null);
+        var pairByIp = Btn(_p, "Vincular por IP…", ButtonKind.Subtle, _p.Background);
+        pairByIp.Click += async (_, _) => await PairByIp();
+
+        _devices.Controls.Add(Section("Última recepción"));
+        _devices.Controls.Add(Block(_lastReceivedHost));
+        _devices.Controls.Add(Section("Mis dispositivos", testAll, _peerCount));
+        _devices.Controls.Add(Block(_peers));
+        _devices.Controls.Add(Section("Cerca de ti", pairByIp));
+        _devices.Controls.Add(Block(_discovered));
+        _devices.Controls.Add(new Panel { Height = this.S(60), Margin = new Padding(0) }); // room for the toast
+    }
+
+    private void BuildSettingsPage()
+    {
+        var firewall = Btn(_p, "Configurar…", ButtonKind.Standard, _p.Surface);
+        firewall.Click += (_, _) => _app.ConfigureFirewall(askFirst: false);
+        var logs = Btn(_p, "Abrir carpeta", ButtonKind.Standard, _p.Surface);
+        logs.Click += (_, _) => TrayApp.OpenLogs();
+        var manual = Btn(_p, "Añadir…", ButtonKind.Standard, _p.Surface);
+        manual.Click += (_, _) => AddManual();
+
+        _settings.Controls.Add(Section("Este dispositivo"));
+        _settings.Controls.Add(Group(
+            SettingRow("Nombre", "Así te verán tus otros dispositivos.", _name),
+            SettingRow("Dirección en la red", null, _address)));
+        _settings.Controls.Add(Section("Comportamiento"));
+        _settings.Controls.Add(Group(
+            SettingRow("Iniciar con Windows", "Klip se abre en la bandeja del sistema al iniciar sesión.", _autostart),
+            SettingRow("Enviar también contraseñas",
+                "Por defecto, lo que KeePass, Bitwarden, 1Password… marcan como sensible no sale de este equipo.", _sendSensitive)));
+        _settings.Controls.Add(Section("Sistema"));
+        _settings.Controls.Add(Group(
+            SettingRow("Firewall de Windows", "Reglas de entrada TCP 8765 y UDP 8766, solo en redes privadas.", firewall),
+            SettingRow("Registros", "Para diagnosticar problemas de conexión.", logs)));
+        _settings.Controls.Add(Section("Avanzado"));
+        _settings.Controls.Add(Group(
+            SettingRow("Añadir dispositivo manualmente", "Con un secreto compartido en lugar del PIN. Solo para pruebas.", manual)));
+    }
+
+    /// <summary>Several setting rows inside one card, separated by thin lines.</summary>
+    private Control Group(params Control[] rows)
+    {
+        var stack = new Row(Row.Fill);
+        for (var i = 0; i < rows.Length; i++)
+        {
+            if (i > 0)
+            {
+                stack.Add(new Panel { Height = 1, Dock = DockStyle.Fill, BackColor = _p.Stroke, Margin = new Padding(0, this.S(12), 0, this.S(12)) }, 0, i * 2 - 1);
+            }
+            rows[i].Dock = DockStyle.Fill;
+            stack.Add(rows[i], 0, i * 2);
+        }
+        return Block(NewCard(stack));
+    }
+
+    private Control SettingRow(string title, string? description, Control control)
+    {
+        var row = new Row(Row.Fill, Row.Auto);
+        row.Add(Lbl(title, Body, _p.Text), 0, 0);
+        if (description is not null)
+        {
+            var d = Lbl(description, Small, _p.TextSecondary, wrap: true);
+            d.Margin = new Padding(0, this.S(2), this.S(16), 0);
+            row.Add(d, 0, 1);
+        }
+        control.Anchor = AnchorStyles.Right;
+        control.Margin = new Padding(this.S(12), 0, 0, 0);
+        row.Add(control, 1, 0);
+        if (description is not null) row.SetRowSpan(control, 2);
+        return row;
+    }
+
+    private void PlaceToast(Control host)
+    {
+        var width = Math.Min(this.S(620), host.ClientSize.Width - this.S(32));
+        _toast.Width = width;
+        _toast.Location = new Point((host.ClientSize.Width - width) / 2, host.ClientSize.Height - _toast.Height - this.S(14));
+    }
+
+    // ---------- Refresh ----------
 
     private void OnReceived(ReceivedItem _) => OnNodeChanged();
 
@@ -158,78 +345,271 @@ internal sealed class ConfigWindow : Form
         if (IsHandleCreated && !IsDisposed) BeginInvoke(RefreshAll);
     }
 
+    private void Toast(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return;
+        _toastText.Text = text;
+        _toast.Visible = true;
+        _toast.BringToFront();
+        _toastTimer.Stop();
+        _toastTimer.Start();
+    }
+
     public void RefreshAll()
     {
         if (IsDisposed) return;
-        if (!_name.Focused) _name.Text = _node.DeviceName;
-        var ips = NetworkInfo.LocalIPv4();
-        _address.Text = (ips.Count == 0 ? "sin red" : string.Join(", ", ips)) + $"  ·  puerto {_node.HttpPort}";
-        var on = _node.SyncEnabled && _node.IsServerRunning;
-        _status.Text = on ? "Sincronización activada" : "Sincronización pausada (actívala en el icono de la bandeja para vincular)";
-        _status.ForeColor = on ? Color.DarkGreen : Color.DimGray;
-        _lastReceived.Text = _node.LastReceived is { } r
-            ? $"{DateTimeOffset.FromUnixTimeMilliseconds(r.AtMs).LocalDateTime:HH:mm:ss} · de {r.From}{(r.IsTest ? " · prueba" : "")}" +
-              $"{Environment.NewLine}{(r.IsImage ? r.Preview() : $"«{r.Preview(200)}»")}"
-            : "nada todavía";
-        ShowLastImage(_node.LastReceived);
-        _sendSensitive.Checked = _node.SendSensitive;
-
-        var selectedDiscovered = SelectedTag(_discovered);
-        _discovered.BeginUpdate();
-        _discovered.Items.Clear();
-        foreach (var d in _node.Discovered)
-        {
-            var item = new ListViewItem(d.DeviceName) { Tag = d.DeviceId, Selected = d.DeviceId == selectedDiscovered };
-            item.SubItems.Add(PlatformLabel(d.Platform));
-            item.SubItems.Add($"{d.Host}:{d.HttpPort}");
-            item.SubItems.Add(d.PairingOpen ? "Listo para vincular" : "Abre su ventana de Klip para vincular");
-            _discovered.Items.Add(item);
-        }
-        _discovered.EndUpdate();
-
-        var selected = SelectedTag(_peers);
-        _refreshing = true;
-        _peers.BeginUpdate();
-        _peers.Items.Clear();
-        foreach (var p in _node.Peers)
-        {
-            var item = new ListViewItem(p.Name) { Tag = p.DeviceId, Checked = p.Enabled, Selected = p.DeviceId == selected };
-            item.SubItems.Add(PlatformLabel(p.Platform));
-            item.SubItems.Add($"{p.Host}:{p.Port}");
-            item.SubItems.Add(p.LastSeenMs is { } ms ? DateTimeOffset.FromUnixTimeMilliseconds(ms).LocalDateTime.ToString("dd/MM HH:mm:ss") : "nunca");
-            item.SubItems.Add(p.LastStatus ?? "");
-            _peers.Items.Add(item);
-        }
-        _peers.EndUpdate();
-        _refreshing = false;
-    }
-
-    private byte[]? _shownImage;
-
-    private void ShowLastImage(ReceivedItem? item)
-    {
-        if (item?.Image is not { } bytes)
-        {
-            _lastImage.Visible = false;
-            return;
-        }
-        if (ReferenceEquals(bytes, _shownImage)) return;
+        SuspendLayout();
         try
         {
-            using var source = Image.FromStream(new MemoryStream(bytes));
-            var old = _lastImage.Image;
-            _lastImage.Image = new Bitmap(source);
-            old?.Dispose();
-            _lastImage.Visible = true;
-            _shownImage = bytes;
+            var ips = NetworkInfo.LocalIPv4();
+            var address = (ips.Count == 0 ? "sin red" : string.Join(", ", ips)) + $" · puerto {_node.HttpPort}";
+            _subtitle.Text = $"{_node.DeviceName} · {address}";
+            _address.Text = address;
+            if (!_name.Focused) _name.Text = _node.DeviceName;
+
+            var on = _node.SyncEnabled && _node.IsServerRunning;
+            if (on) _status.Set("Sincronizando", _p.Success, _p.SuccessSoft);
+            else _status.Set("En pausa", _p.Neutral, _p.SurfaceAlt);
+            _sync.SetSilently(_node.SyncEnabled);
+            _autostart.SetSilently(_node.StartWithWindows);
+            _sendSensitive.SetSilently(_node.SendSensitive);
+
+            _banner.Visible = !_node.SyncEnabled;
+            _bannerText.Text = "La sincronización está en pausa: no se envía ni se recibe nada. Actívala con el interruptor.";
+
+            RefreshLastReceived();
+            RefreshPeers();
+            RefreshDiscovered(on);
         }
-        catch (ArgumentException)
+        finally
         {
-            _lastImage.Visible = false; // not a decodable image
+            ResumeLayout(true);
         }
     }
 
-    private static string? SelectedTag(ListView list) => list.SelectedItems.Count > 0 ? list.SelectedItems[0].Tag as string : null;
+    private void RefreshLastReceived()
+    {
+        var r = _node.LastReceived;
+        var key = r is null ? "" : $"{r.AtMs}|{r.From}|{r.IsTest}|{r.Content.Length}|{r.Image?.Length}";
+        if (key == _lastReceivedKey) return;
+        _lastReceivedKey = key;
+        Control card;
+        if (r is null)
+        {
+            card = EmptyState("Nada todavía", "Copia algo en otro dispositivo vinculado, o pulsa «Enviar prueba» en él.");
+        }
+        else
+        {
+            var when = DateTimeOffset.FromUnixTimeMilliseconds(r.AtMs).LocalDateTime;
+            var meta = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 0, 0, this.S(8)), BackColor = Color.Transparent };
+            meta.Controls.Add(Lbl(r.From, Strong, _p.Text));
+            var time = Lbl($"{when:HH:mm:ss}", Small, _p.TextSecondary);
+            time.Margin = new Padding(this.S(8), this.S(1), 0, 0);
+            meta.Controls.Add(time);
+            if (r.IsTest)
+            {
+                var tag = new Pill { Margin = new Padding(this.S(8), 0, 0, 0) };
+                tag.Set("prueba", _p.Accent, _p.AccentSoft, dot: false);
+                meta.Controls.Add(tag);
+            }
+
+            var body = new Row(Row.Fill);
+            body.Add(meta, 0, 0);
+            if (r.Image is { } bytes)
+            {
+                if (!ReferenceEquals(bytes, _shownImage))
+                {
+                    _shownImage = bytes;
+                    _shownBitmap?.Dispose();
+                    try
+                    {
+                        using var source = Image.FromStream(new MemoryStream(bytes));
+                        _shownBitmap = new Bitmap(source);
+                    }
+                    catch (ArgumentException)
+                    {
+                        _shownBitmap = null; // not a decodable image
+                    }
+                }
+                if (_shownBitmap is not null)
+                {
+                    var scale = Math.Min(1.0, Math.Min(this.S(320) / (double)_shownBitmap.Width, this.S(180) / (double)_shownBitmap.Height));
+                    body.Add(new PictureBox
+                    {
+                        Image = _shownBitmap,
+                        SizeMode = PictureBoxSizeMode.Zoom,
+                        Size = new Size(Math.Max(1, (int)(_shownBitmap.Width * scale)), Math.Max(1, (int)(_shownBitmap.Height * scale))),
+                        Margin = new Padding(0, 0, 0, this.S(6)),
+                        Anchor = AnchorStyles.Left,
+                    }, 0, 1);
+                }
+                body.Add(Lbl(r.Preview(), Small, _p.TextSecondary), 0, 2);
+            }
+            else
+            {
+                var text = new TextBox
+                {
+                    Text = r.Preview(400),
+                    ReadOnly = true,
+                    Multiline = true,
+                    BorderStyle = BorderStyle.None,
+                    BackColor = _p.SurfaceAlt,
+                    ForeColor = _p.Text,
+                    Font = Body,
+                    Dock = DockStyle.Fill,
+                    TabStop = false,
+                    WordWrap = true,
+                };
+                var box = new Card(_p.SurfaceAlt, Color.Empty, 6)
+                {
+                    Padding = new Padding(this.S(12), this.S(9), this.S(12), this.S(9)),
+                    Dock = DockStyle.Fill,
+                    Margin = new Padding(0),
+                };
+                box.Controls.Add(text);
+                // Height for the wrapped text (at most a few lines; the box scrolls beyond that).
+                box.SizeChanged += (_, _) =>
+                {
+                    var inner = Math.Max(50, box.Width - box.Padding.Horizontal);
+                    var measured = TextRenderer.MeasureText(text.Text, Body, new Size(inner, 0), TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl);
+                    var h = Math.Min(measured.Height + this.S(4), this.S(120)) + box.Padding.Vertical;
+                    if (box.Height != h) box.Height = h;
+                    text.ScrollBars = measured.Height + this.S(4) > this.S(120) ? ScrollBars.Vertical : ScrollBars.None;
+                };
+                box.Height = this.S(44);
+                body.Add(box, 0, 1);
+            }
+            card = NewCard(body);
+        }
+        SetChildren(_lastReceivedHost, [card]);
+    }
+
+    private void RefreshPeers()
+    {
+        var peers = _node.Peers;
+        _peerCount.Visible = peers.Count > 0;
+        _peerCount.Set(peers.Count.ToString(), _p.TextSecondary, _p.SurfaceAlt, dot: false);
+        // Rebuild only when something visible changed (also keeps an open "•••" menu alive).
+        var key = string.Join("\n", peers.Select(p => $"{p.DeviceId}|{p.Name}|{p.Platform}|{p.Host}:{p.Port}|{p.Enabled}|{(p.LastSeenMs is { } ms ? FormatSeen(ms) : "")}|{p.LastStatus}"));
+        if (key == _peersKey) return;
+        _peersKey = key;
+        SetChildren(_peers, peers.Count == 0
+            ? [EmptyState("Aún no hay dispositivos vinculados",
+                "Abre Klip en otro dispositivo conectado a la misma red: aparecerá en «Cerca de ti». Pulsa Vincular y comprueba que ambos muestran el mismo PIN.")]
+            : peers.Select(PeerCard));
+    }
+
+    private void RefreshDiscovered(bool on)
+    {
+        var found = _node.Discovered;
+        var key = $"{on}\n" + string.Join("\n", found.Select(d => $"{d.DeviceId}|{d.DeviceName}|{d.Platform}|{d.Host}:{d.HttpPort}|{d.PairingOpen}"));
+        if (key == _discoveredKey) return;
+        _discoveredKey = key;
+        SetChildren(_discovered, found.Count == 0
+            ? [on
+                ? EmptyState("Buscando dispositivos…", "Abre Klip en el otro dispositivo (con su ventana visible). ¿No aparece? Prueba «Vincular por IP».")
+                : EmptyState("El radar está parado", "Activa la sincronización para buscar dispositivos cercanos.")]
+            : found.Select(DiscoveredCard));
+    }
+
+    private Control PeerCard(PeerView p)
+    {
+        var seen = p.LastSeenMs is { } ms ? FormatSeen(ms) : "nunca conectado";
+        var (statusColor, statusText) = p.LastStatus switch
+        {
+            null => (_p.Neutral, "Sin comprobar"),
+            var s when s.StartsWith("Enviado", StringComparison.Ordinal) || s.StartsWith("Conectado", StringComparison.Ordinal) => (_p.Success, s),
+            var s => (_p.Danger, s),
+        };
+
+        var info = new Row(Row.Fill) { Anchor = AnchorStyles.Left | AnchorStyles.Right, Margin = new Padding(0, 0, this.S(12), 0) };
+        var name = Lbl(p.Name, Strong, _p.Text);
+        name.AutoEllipsis = true;
+        info.Add(name, 0, 0);
+        info.Add(Lbl($"{PlatformLabel(p.Platform)} · {p.Host}:{p.Port} · {seen}", Small, _p.TextSecondary), 0, 1);
+        var status = new Label
+        {
+            Text = "●  " + statusText,
+            AutoSize = true,
+            Font = Small,
+            ForeColor = statusColor,
+            Margin = new Padding(0, this.S(2), 0, 0),
+            UseMnemonic = false,
+            BackColor = Color.Transparent,
+        };
+        info.Add(status, 0, 2);
+
+        var receivesLabel = Lbl("Recibe copias", Small, _p.TextSecondary);
+        receivesLabel.Anchor = AnchorStyles.Right;
+        receivesLabel.Margin = new Padding(0, 0, this.S(8), 0);
+        var enabled = new ToggleSwitch(_p) { Anchor = AnchorStyles.None };
+        enabled.SetSilently(p.Enabled);
+        enabled.CheckedChanged += (_, _) => _node.SetPeerEnabled(p.DeviceId, enabled.Checked);
+        var tips = new ToolTip();
+        tips.SetToolTip(enabled, "Recibe lo que copias en este equipo");
+
+        var test = Btn(_p, "Enviar prueba", ButtonKind.Standard, _p.Surface);
+        test.Margin = new Padding(this.S(14), 0, this.S(4), 0);
+        test.Click += async (_, _) => await _app.SendTestAsync(p.DeviceId);
+
+        var more = Btn(_p, "•••", ButtonKind.Subtle, _p.Surface);
+        more.Padding = new Padding(this.S(6), this.S(2), this.S(6), this.S(2));
+        tips.SetToolTip(more, "Más opciones");
+        var menu = MenuFor(_p);
+        menu.Items.Add("Comprobar conexión", null, async (_, _) =>
+        {
+            Toast($"Comprobando {p.Name}…");
+            var r = await _node.PingAsync(p.DeviceId);
+            Toast(r.Ok ? $"{p.Name}: conectado ({r.ElapsedMs} ms)" : $"{p.Name}: sin conexión ({r.Error})");
+        });
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Desvincular…", null, async (_, _) =>
+        {
+            if (Confirm($"¿Desvincular «{p.Name}»?", $"Este equipo y {p.Name} dejarán de sincronizarse entre sí.", "Desvincular"))
+                await _node.UnpairAsync(p.DeviceId);
+        });
+        menu.Items.Add("Expulsar del grupo…", null, async (_, _) =>
+        {
+            if (Confirm($"¿Expulsar «{p.Name}» del grupo?", $"{p.Name} se eliminará de todos los dispositivos vinculados.", "Expulsar"))
+                await _node.ExpelAsync(p.DeviceId);
+        });
+        foreach (ToolStripItem item in menu.Items) item.ForeColor = _p.Text;
+        more.Click += (_, _) => menu.Show(more, new Point(more.Width - menu.PreferredSize.Width, more.Height));
+
+        var row = new Row(Row.Auto, Row.Fill, Row.Auto, Row.Auto, Row.Auto, Row.Auto);
+        row.Add(new PlatformIcon(_p, p.Platform, dimmed: !p.Enabled), 0)
+           .Add(info, 1)
+           .Add(receivesLabel, 2)
+           .Add(enabled, 3)
+           .Add(test, 4)
+           .Add(more, 5);
+        var card = NewCard(row);
+        card.Disposed += (_, _) => { menu.Dispose(); tips.Dispose(); };
+        return card;
+    }
+
+    private Control DiscoveredCard(DiscoveredDevice d)
+    {
+        var pair = Btn(_p, "Vincular", d.PairingOpen ? ButtonKind.Accent : ButtonKind.Standard, _p.Surface);
+        pair.Enabled = d.PairingOpen;
+        pair.Click += async (_, _) => await PairWith(d.DeviceName, d.Host, d.HttpPort);
+        var info = new Row(Row.Fill) { Anchor = AnchorStyles.Left | AnchorStyles.Right };
+        info.Add(Lbl(d.DeviceName, Strong, _p.Text), 0, 0);
+        info.Add(Lbl($"{PlatformLabel(d.Platform)} · {d.Host}:{d.HttpPort}" + (d.PairingOpen ? "" : " · abre su ventana de Klip para vincular"), Small, _p.TextSecondary), 0, 1);
+        var row = new Row(Row.Auto, Row.Fill, Row.Auto);
+        row.Add(new PlatformIcon(_p, d.Platform), 0).Add(info, 1).Add(pair, 2);
+        return NewCard(row);
+    }
+
+    private static string FormatSeen(long ms)
+    {
+        var at = DateTimeOffset.FromUnixTimeMilliseconds(ms).LocalDateTime;
+        var ago = DateTime.Now - at;
+        if (ago < TimeSpan.FromMinutes(1)) return "visto ahora";
+        if (ago < TimeSpan.FromHours(1)) return $"visto hace {(int)ago.TotalMinutes} min";
+        if (at.Date == DateTime.Today) return $"visto a las {at:HH:mm}";
+        return $"visto el {at:dd/MM HH:mm}";
+    }
 
     private static string PlatformLabel(string p) => p switch
     {
@@ -240,29 +620,32 @@ internal sealed class ConfigWindow : Form
         _ => p,
     };
 
-    private void SetActivity(string text) => _activity.Text = text;
+    private bool Confirm(string title, string text, string confirm)
+    {
+        using var dialog = new MessageDialog(_p, title, text, confirm, "Cancelar");
+        return dialog.ShowDialog(this) == DialogResult.OK;
+    }
+
+    private void Inform(string title, string text)
+    {
+        using var dialog = new MessageDialog(_p, title, text, "Aceptar", null);
+        dialog.ShowDialog(this);
+    }
 
     private void SaveName()
     {
         var name = _name.Text.Trim();
-        if (name.Length == 0) return;
+        if (name.Length == 0 || name == _node.DeviceName) return;
         _node.DeviceName = name;
+        Toast("Nombre guardado");
         RefreshAll();
     }
 
     // ---------- Pairing (initiator) ----------
 
-    private async Task PairSelected()
-    {
-        if (SelectedTag(_discovered) is not { } id) return;
-        var d = _node.Discovered.FirstOrDefault(x => x.DeviceId == id);
-        if (d is null) return;
-        await PairWith(d.DeviceName, d.Host, d.HttpPort);
-    }
-
     private async Task PairByIp()
     {
-        using var dialog = new PairByIpDialog();
+        using var dialog = new PairByIpDialog(_p);
         if (dialog.ShowDialog(this) == DialogResult.OK) await PairWith(dialog.Host, dialog.Host, dialog.Port);
     }
 
@@ -271,18 +654,18 @@ internal sealed class ConfigWindow : Form
         if (_busy) return;
         if (!_node.IsServerRunning)
         {
-            MessageBox.Show(this, "Activa la sincronización (icono de la bandeja) antes de vincular.", "Klip", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            Inform("La sincronización está en pausa", "Actívala con el interruptor de arriba antes de vincular.");
             return;
         }
         _busy = true;
         try
         {
-            SetActivity($"Contactando con {name}…");
+            Toast($"Contactando con {name}…");
             var (pairing, error) = await _node.StartPairingAsync(host, port);
             if (pairing is null)
             {
-                SetActivity("");
-                MessageBox.Show(this, error, "Klip — Vincular", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                _toast.Visible = false;
+                Inform("No se pudo vincular", error ?? "No se pudo contactar");
                 return;
             }
 
@@ -290,15 +673,19 @@ internal sealed class ConfigWindow : Form
             pin.ShowDialog(this);
             if (!pin.Accepted)
             {
-                SetActivity("");
+                _toast.Visible = false;
                 await _node.CancelPairingAsync(pairing);
                 return;
             }
 
-            SetActivity($"Esperando la confirmación en {pairing.DeviceName}…");
+            Toast($"Esperando la confirmación en {pairing.DeviceName}…");
             var outcome = await _node.ConfirmPairingAsync(pairing);
-            SetActivity(outcome.Ok ? $"Vinculado con {pairing.DeviceName}" : "");
-            if (!outcome.Ok) MessageBox.Show(this, outcome.Message ?? "No se pudo vincular", "Klip — Vincular", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            if (outcome.Ok) Toast($"Vinculado con {pairing.DeviceName}");
+            else
+            {
+                _toast.Visible = false;
+                Inform("No se pudo vincular", outcome.Message ?? "No se pudo vincular");
+            }
         }
         finally
         {
@@ -306,96 +693,168 @@ internal sealed class ConfigWindow : Form
         }
     }
 
-    // ---------- Paired devices ----------
-
-    private async Task PingSelected()
-    {
-        if (SelectedTag(_peers) is not { } id) return;
-        SetActivity("Comprobando…");
-        var r = await _node.PingAsync(id);
-        SetActivity(r.Ok ? $"Conectado ({r.ElapsedMs} ms)" : $"Sin conexión: {r.Error}");
-    }
-
-    private async Task TestSelected()
-    {
-        if (SelectedTag(_peers) is not { } id) return;
-        await _app.SendTestAsync(id);
-    }
-
-    private async Task UnpairSelected()
-    {
-        if (SelectedTag(_peers) is not { } id) return;
-        var name = _peers.SelectedItems[0].Text;
-        if (MessageBox.Show(this, $"¿Desvincular «{name}»? Este equipo y {name} dejarán de sincronizarse entre sí.", "Klip",
-                MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
-        {
-            await _node.UnpairAsync(id);
-        }
-    }
-
-    private async Task ExpelSelected()
-    {
-        if (SelectedTag(_peers) is not { } id) return;
-        var name = _peers.SelectedItems[0].Text;
-        if (MessageBox.Show(this, $"¿Expulsar «{name}» del grupo? Se eliminará de todos los dispositivos vinculados.", "Klip",
-                MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
-        {
-            await _node.ExpelAsync(id);
-        }
-    }
-
     private void AddManual()
     {
-        using var dialog = new AddPeerDialog(_node.DeviceId);
+        using var dialog = new AddPeerDialog(_p, _node.DeviceId);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         try
         {
             _node.AddOrUpdatePeer(dialog.PeerId, dialog.PeerName, dialog.Host, dialog.Port, dialog.Secret, dialog.Platform);
+            Toast($"{dialog.PeerName} añadido");
         }
         catch (ArgumentException e)
         {
-            MessageBox.Show(this, e.Message, "Klip", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            Inform("No se pudo añadir", e.Message);
         }
     }
 }
 
-/// <summary>Shows the 6-digit PIN. OK = "Coincide". Can be closed by code when the session ends.</summary>
-internal sealed class PinDialog : Form
+/// <summary>Common look of Klip's small windows: palette, fixed border, auto size, dark title bar.</summary>
+internal abstract class KlipDialog : Form
 {
-    public PinDialog(string title, string pin, string text)
+    protected readonly Palette P;
+
+    protected KlipDialog(Palette p, string title)
     {
+        P = p;
         Text = title;
         Icon = AppIcon.Main;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = MinimizeBox = false;
+        StartPosition = FormStartPosition.CenterParent;
+        AutoScaleMode = AutoScaleMode.None;
+        AutoSize = true;
+        AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        BackColor = p.Background;
+        ForeColor = p.Text;
+        Font = Body;
+        ShowInTaskbar = false;
+        ApplyTitleBar(this, p);
+    }
+
+    protected Row NewLayout() => new(Row.Fill) { Padding = new Padding(this.S(24), this.S(20), this.S(24), this.S(20)), Dock = DockStyle.Fill };
+
+    protected FlowLayoutPanel Actions(params Button[] buttons)
+    {
+        var panel = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Anchor = AnchorStyles.Right, Margin = new Padding(0, this.S(16), 0, 0), BackColor = Color.Transparent };
+        foreach (var b in buttons.Reverse())
+        {
+            b.MinimumSize = new Size(this.S(100), 0);
+            b.Margin = new Padding(this.S(8), 0, 0, 0);
+            panel.Controls.Add(b);
+        }
+        return panel;
+    }
+
+    protected Label Heading(string text) => Ui.Lbl(text, SectionFont, P.Text);
+
+    protected Label Description(string text, int width)
+    {
+        var l = Ui.Lbl(text, Body, P.TextSecondary);
+        l.MaximumSize = new Size(this.S(width), 0);
+        l.Margin = new Padding(0, this.S(6), 0, 0);
+        return l;
+    }
+
+    protected TextBox Input(int width) => new()
+    {
+        Width = this.S(width),
+        BorderStyle = BorderStyle.FixedSingle,
+        BackColor = P.Dark ? P.SurfaceAlt : P.Surface,
+        ForeColor = P.Text,
+        Font = Body,
+    };
+
+    protected NumericUpDown PortInput() => new()
+    {
+        Minimum = 1,
+        Maximum = 65535,
+        Value = Protocol.HttpPort,
+        Width = this.S(100),
+        BorderStyle = BorderStyle.FixedSingle,
+        BackColor = P.Dark ? P.SurfaceAlt : P.Surface,
+        ForeColor = P.Text,
+        Font = Body,
+    };
+}
+
+/// <summary>Themed replacement for MessageBox: title, text and one or two buttons.</summary>
+internal sealed class MessageDialog : KlipDialog
+{
+    public MessageDialog(Palette p, string title, string text, string ok, string? cancel) : base(p, "Klip")
+    {
+        var layout = NewLayout();
+        layout.Add(Heading(title), 0, 0);
+        layout.Add(Description(text, 380), 0, 1);
+        var okButton = Ui.Btn(p, ok, ButtonKind.Accent, p.Background);
+        okButton.DialogResult = DialogResult.OK;
+        var buttons = new List<Button> { okButton };
+        if (cancel is not null)
+        {
+            var cancelButton = Ui.Btn(p, cancel, ButtonKind.Standard, p.Background);
+            cancelButton.DialogResult = DialogResult.Cancel;
+            buttons.Add(cancelButton);
+            CancelButton = cancelButton;
+        }
+        else
+        {
+            CancelButton = okButton;
+        }
+        layout.Add(Actions([.. buttons]), 0, 2);
+        Controls.Add(layout);
+        AcceptButton = okButton;
+    }
+}
+
+/// <summary>Shows the 6-digit PIN. OK = "Coincide". Can be closed by code when the session ends.</summary>
+internal sealed class PinDialog : KlipDialog
+{
+    public PinDialog(string title, string pin, string text) : base(Palette.Current(), title)
+    {
         StartPosition = FormStartPosition.CenterScreen;
         TopMost = true;
         ShowInTaskbar = true;
-        AutoSize = true;
-        AutoSizeMode = AutoSizeMode.GrowAndShrink;
-        Font = new Font("Segoe UI", 10f);
 
-        var layout = new TableLayoutPanel { AutoSize = true, ColumnCount = 1, Padding = new Padding(20), Dock = DockStyle.Fill };
-        layout.Controls.Add(new Label { Text = title, AutoSize = true, Font = new Font("Segoe UI", 12f, FontStyle.Bold), Anchor = AnchorStyles.None });
-        layout.Controls.Add(new Label
+        var layout = NewLayout();
+        layout.Padding = new Padding(this.S(32), this.S(26), this.S(32), this.S(24));
+        var heading = Heading(title);
+        heading.Anchor = AnchorStyles.None;
+        layout.Add(heading, 0, 0);
+
+        var digits = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Anchor = AnchorStyles.None, Margin = new Padding(0, this.S(18), 0, this.S(14)), BackColor = Color.Transparent };
+        for (var i = 0; i < pin.Length; i++)
         {
-            Text = $"{pin[..3]} {pin[3..]}",
-            AutoSize = true,
-            Font = new Font("Consolas", 32f, FontStyle.Bold),
-            Anchor = AnchorStyles.None,
-            Padding = new Padding(0, 12, 0, 12),
-        });
-        layout.Controls.Add(new Label { Text = text, AutoSize = true, MaximumSize = new Size(380, 0), Anchor = AnchorStyles.None });
+            var cell = new Card(P.Surface, P.Stroke, 8)
+            {
+                Size = new Size(this.S(44), this.S(56)),
+                Margin = new Padding(i == 3 ? this.S(16) : this.S(3), 0, this.S(3), 0),
+            };
+            cell.Controls.Add(new Label
+            {
+                Text = pin[i].ToString(),
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = new Font("Consolas", 24f, FontStyle.Bold),
+                ForeColor = P.Text,
+                BackColor = Color.Transparent,
+            });
+            digits.Controls.Add(cell);
+        }
+        layout.Add(digits, 0, 1);
+        var description = Description(text, 360);
+        description.Anchor = AnchorStyles.None;
+        description.TextAlign = ContentAlignment.MiddleCenter;
+        layout.Add(description, 0, 2);
 
         // Buttons close the form explicitly: a button's DialogResult only closes MODAL forms, and the incoming
         // pairing dialog is shown modeless (so it can be closed when the other side cancels).
-        var yes = new Button { Text = "Coincide", AutoSize = true, Padding = new Padding(10, 2, 10, 2) };
-        var no = new Button { Text = "No coincide", AutoSize = true, Padding = new Padding(10, 2, 10, 2) };
+        var yes = Ui.Btn(P, "Coincide", ButtonKind.Accent, P.Background);
+        var no = Ui.Btn(P, "No coincide", ButtonKind.Standard, P.Background);
         yes.Click += (_, _) => Answer(true);
         no.Click += (_, _) => Answer(false);
-        var buttons = new FlowLayoutPanel { AutoSize = true, Anchor = AnchorStyles.None, Padding = new Padding(0, 12, 0, 0) };
-        buttons.Controls.AddRange([yes, no]);
-        layout.Controls.Add(buttons);
+        var actions = Actions(yes, no);
+        actions.Anchor = AnchorStyles.None;
+        layout.Add(actions, 0, 3);
         Controls.Add(layout);
         AcceptButton = yes;
         CancelButton = no;
@@ -421,56 +880,54 @@ internal sealed class PinDialog : Form
     }
 }
 
-internal sealed class PairByIpDialog : Form
+internal sealed class PairByIpDialog : KlipDialog
 {
-    private readonly TextBox _host = new() { Width = 200 };
-    private readonly NumericUpDown _port = new() { Minimum = 1, Maximum = 65535, Value = Protocol.HttpPort, Width = 100 };
+    private readonly TextBox _host;
+    private readonly NumericUpDown _port;
 
     public string Host => _host.Text.Trim();
     public int Port => (int)_port.Value;
 
-    public PairByIpDialog()
+    public PairByIpDialog(Palette p) : base(p, "Vincular por IP")
     {
-        Text = "Vincular por IP";
-        Icon = AppIcon.Main;
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        MaximizeBox = MinimizeBox = false;
-        StartPosition = FormStartPosition.CenterParent;
-        AutoSize = true;
-        AutoSizeMode = AutoSizeMode.GrowAndShrink;
-        Font = new Font("Segoe UI", 9.5f);
-        var t = new TableLayoutPanel { AutoSize = true, ColumnCount = 2, Padding = new Padding(10), Dock = DockStyle.Fill };
-        t.Controls.Add(new Label { Text = "IP:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
-        t.Controls.Add(_host, 1, 0);
-        t.Controls.Add(new Label { Text = "Puerto:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
-        t.Controls.Add(_port, 1, 1);
-        t.Controls.Add(new Label { Text = "El otro dispositivo debe tener Klip abierto.", AutoSize = true, ForeColor = Color.DimGray }, 1, 2);
-        var ok = new Button { Text = "Vincular", AutoSize = true };
+        _host = Input(220);
+        _port = PortInput();
+        var layout = NewLayout();
+        layout.Add(Heading("Vincular por IP"), 0, 0);
+        layout.Add(Description("Útil si el otro dispositivo no aparece en «Cerca de ti» (redes de invitados, aislamiento de clientes…). Debe tener la ventana de Klip abierta.", 380), 0, 1);
+
+        var fields = new Row(Row.Auto, Row.Auto) { Margin = new Padding(0, this.S(14), 0, 0) };
+        fields.Add(Ui.Lbl("Dirección IP", Small, p.Text), 0, 0).Add(Ui.Lbl("Puerto", Small, p.Text), 1, 0);
+        _host.Margin = new Padding(0, this.S(4), this.S(12), 0);
+        _port.Margin = new Padding(0, this.S(4), 0, 0);
+        fields.Add(_host, 0, 1).Add(_port, 1, 1);
+        layout.Add(fields, 0, 2);
+
+        var ok = Ui.Btn(p, "Vincular", ButtonKind.Accent, p.Background);
         ok.Click += (_, _) =>
         {
-            if (Host.Length == 0) return;
+            if (Host.Length == 0) { _host.Focus(); return; }
             DialogResult = DialogResult.OK;
             Close();
         };
-        var cancel = new Button { Text = "Cancelar", DialogResult = DialogResult.Cancel, AutoSize = true };
-        var actions = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill };
-        actions.Controls.AddRange([cancel, ok]);
-        t.Controls.Add(actions, 1, 3);
-        Controls.Add(t);
+        var cancel = Ui.Btn(p, "Cancelar", ButtonKind.Standard, p.Background);
+        cancel.DialogResult = DialogResult.Cancel;
+        layout.Add(Actions(ok, cancel), 0, 3);
+        Controls.Add(layout);
         AcceptButton = ok;
         CancelButton = cancel;
     }
 }
 
 /// <summary>Advanced: manual pairing with a shared 64-hex-char secret (no PIN). Both sides must enter the same secret.</summary>
-internal sealed class AddPeerDialog : Form
+internal sealed class AddPeerDialog : KlipDialog
 {
-    private readonly TextBox _name = new() { Width = 320 };
-    private readonly TextBox _id = new() { Width = 320 };
-    private readonly TextBox _host = new() { Width = 320 };
-    private readonly NumericUpDown _port = new() { Minimum = 1, Maximum = 65535, Value = Protocol.HttpPort, Width = 100 };
-    private readonly ComboBox _platform = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 120 };
-    private readonly TextBox _secret = new() { Width = 320, Font = new Font(FontFamily.GenericMonospace, 9) };
+    private readonly TextBox _name;
+    private readonly TextBox _id;
+    private readonly TextBox _host;
+    private readonly NumericUpDown _port;
+    private readonly ComboBox _platform;
+    private readonly TextBox _secret;
 
     public string PeerName => _name.Text.Trim();
     public string PeerId => _id.Text.Trim();
@@ -479,60 +936,71 @@ internal sealed class AddPeerDialog : Form
     public string Platform => (string)_platform.SelectedItem!;
     public byte[] Secret => Convert.FromHexString(_secret.Text.Trim());
 
-    public AddPeerDialog(string localDeviceId)
+    public AddPeerDialog(Palette p, string localDeviceId) : base(p, "Añadir dispositivo manualmente")
     {
-        Text = "Añadir dispositivo manualmente (avanzado)";
-        Icon = AppIcon.Main;
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        MaximizeBox = MinimizeBox = false;
-        StartPosition = FormStartPosition.CenterParent;
-        AutoSize = true;
-        AutoSizeMode = AutoSizeMode.GrowAndShrink;
-        Font = new Font("Segoe UI", 9.5f);
+        _name = Input(320);
+        _id = Input(320);
+        _host = Input(320);
+        _port = PortInput();
+        _secret = Input(320);
+        _secret.Font = new Font("Consolas", 9.5f);
+        _platform = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Width = this.S(140),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = p.Dark ? p.SurfaceAlt : p.Surface,
+            ForeColor = p.Text,
+            Font = Body,
+        };
         _platform.Items.AddRange(["android", "windows", "linux", "devpeer", "unknown"]);
         _platform.SelectedIndex = 0;
 
-        var t = new TableLayoutPanel { AutoSize = true, ColumnCount = 3, Padding = new Padding(10), Dock = DockStyle.Fill };
-        void Row(int r, string label, Control c, Control? extra = null)
+        var layout = NewLayout();
+        layout.Add(Heading("Añadir dispositivo manualmente"), 0, 0);
+        layout.Add(Description("Usa mejor «Vincular» con el PIN. Esto solo es para pruebas: introduce el mismo secreto en ambos dispositivos.", 520), 0, 1);
+
+        var grid = new Row(Row.Auto, Row.Auto, Row.Auto) { Margin = new Padding(0, this.S(12), 0, 0) };
+        var r = 0;
+        void Field(string label, Control c, Control? extra = null)
         {
-            t.Controls.Add(new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Left }, 0, r);
-            t.Controls.Add(c, 1, r);
-            if (extra is not null) t.Controls.Add(extra, 2, r);
+            var l = Ui.Lbl(label, Body, p.TextSecondary);
+            l.Margin = new Padding(0, this.S(4), this.S(12), this.S(4));
+            grid.Add(l, 0, r);
+            c.Margin = new Padding(0, this.S(4), 0, this.S(4));
+            c.Anchor = AnchorStyles.Left;
+            grid.Add(c, 1, r);
+            if (extra is not null) grid.Add(extra, 2, r);
+            r++;
         }
 
-        var ownId = new TextBox { Width = 320, ReadOnly = true, Text = localDeviceId };
-        var copyId = new Button { Text = "Copiar", AutoSize = true };
+        var ownId = Input(320);
+        ownId.ReadOnly = true;
+        ownId.Text = localDeviceId;
+        var copyId = Ui.Btn(p, "Copiar", ButtonKind.Subtle, p.Background);
         copyId.Click += (_, _) => Clipboard.SetText(localDeviceId);
-        var generate = new Button { Text = "Generar", AutoSize = true };
+        var generate = Ui.Btn(p, "Generar", ButtonKind.Subtle, p.Background);
         generate.Click += (_, _) => _secret.Text = Convert.ToHexStringLower(PairKeys.NewRandomSecret());
-        var copy = new Button { Text = "Copiar", AutoSize = true };
+        var copy = Ui.Btn(p, "Copiar", ButtonKind.Subtle, p.Background);
         copy.Click += (_, _) => { if (_secret.Text.Length > 0) Clipboard.SetText(_secret.Text); };
-        var secretButtons = new FlowLayoutPanel { AutoSize = true };
+        var secretButtons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0), BackColor = Color.Transparent };
         secretButtons.Controls.AddRange([generate, copy]);
 
-        Row(0, "ID de este equipo:", ownId, copyId);
-        Row(1, "Nombre:", _name);
-        Row(2, "ID de dispositivo:", _id);
-        Row(3, "IP / host:", _host);
-        Row(4, "Puerto:", _port);
-        Row(5, "Plataforma:", _platform);
-        Row(6, "Secreto (64 hex):", _secret, secretButtons);
-        t.Controls.Add(new Label
-        {
-            AutoSize = true,
-            MaximumSize = new Size(480, 0),
-            ForeColor = Color.DimGray,
-            Text = "Usa mejor «Vincular» con el PIN. Esto solo es para pruebas: introduce el mismo secreto en ambos dispositivos.",
-        }, 1, 7);
+        Field("ID de este equipo", ownId, copyId);
+        Field("Nombre", _name);
+        Field("ID de dispositivo", _id);
+        Field("IP / host", _host);
+        Field("Puerto", _port);
+        Field("Plataforma", _platform);
+        Field("Secreto (64 hex)", _secret, secretButtons);
+        layout.Add(grid, 0, 2);
 
-        var ok = new Button { Text = "Añadir", AutoSize = true };
+        var ok = Ui.Btn(p, "Añadir", ButtonKind.Accent, p.Background);
         ok.Click += (_, _) => ValidateAndClose();
-        var cancel = new Button { Text = "Cancelar", DialogResult = DialogResult.Cancel, AutoSize = true };
-        var actions = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill };
-        actions.Controls.AddRange([cancel, ok]);
-        t.Controls.Add(actions, 1, 8);
-
-        Controls.Add(t);
+        var cancel = Ui.Btn(p, "Cancelar", ButtonKind.Standard, p.Background);
+        cancel.DialogResult = DialogResult.Cancel;
+        layout.Add(Actions(ok, cancel), 0, 3);
+        Controls.Add(layout);
         AcceptButton = ok;
         CancelButton = cancel;
     }
@@ -546,7 +1014,8 @@ internal sealed class AddPeerDialog : Form
         else if (!System.Text.RegularExpressions.Regex.IsMatch(_secret.Text.Trim(), "^[0-9a-fA-F]{64}$")) error = "El secreto debe tener 64 caracteres hexadecimales.";
         if (error is not null)
         {
-            MessageBox.Show(this, error, "Klip", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            using var dialog = new MessageDialog(P, "Revisa los datos", error, "Aceptar", null);
+            dialog.ShowDialog(this);
             return;
         }
         DialogResult = DialogResult.OK;

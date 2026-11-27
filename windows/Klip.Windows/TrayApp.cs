@@ -87,7 +87,7 @@ internal sealed class TrayApp : ApplicationContext
         }
     }
 
-    private async Task SetSyncAsync(bool enabled, bool persist = true)
+    internal async Task SetSyncAsync(bool enabled, bool persist = true)
     {
         try
         {
@@ -195,7 +195,7 @@ internal sealed class TrayApp : ApplicationContext
         _configWindow.Show();
     }
 
-    private void ToggleAutostart()
+    internal void ToggleAutostart()
     {
         var enabled = !_node.StartWithWindows;
         try
@@ -208,9 +208,10 @@ internal sealed class TrayApp : ApplicationContext
         {
             Balloon("Klip", $"No se pudo cambiar el inicio automático: {e.Message}", ToolTipIcon.Error);
         }
+        _configWindow?.RefreshAll();
     }
 
-    private void ConfigureFirewall(bool askFirst)
+    internal void ConfigureFirewall(bool askFirst)
     {
         if (Firewall.RulesExist())
         {
@@ -229,7 +230,7 @@ internal sealed class TrayApp : ApplicationContext
             ok ? ToolTipIcon.Info : ToolTipIcon.Warning);
     }
 
-    private static void OpenLogs()
+    internal static void OpenLogs()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(AppPaths.LogFile)!);
         System.Diagnostics.Process.Start("explorer.exe", Path.GetDirectoryName(AppPaths.LogFile)!);

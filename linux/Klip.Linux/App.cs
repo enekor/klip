@@ -44,6 +44,7 @@ internal sealed class App : Application
     public override void Initialize()
     {
         Styles.Add(new FluentTheme());
+        Resources.MergedDictionaries.Add(KlipTheme.Resources());
         RequestedThemeVariant = ThemeVariant.Default; // follow the desktop's light/dark setting
     }
 
